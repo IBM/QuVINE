@@ -1,0 +1,79 @@
+
+data_path: /dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data
+
+graph:
+  name: ProteomeHD
+  path: ${data_path}/networks/${graph.name}/edges_list_ncbi.csv
+  
+#walker: rwr
+
+disease: 
+  name: autism
+
+# ------------------------------------------------------------
+# Project / runtime
+# ------------------------------------------------------------
+runtime:
+  name: qune
+  run_name: ${now:%Y-%m-%d_%H-%M-%S}
+  run_dir: ProteomeHD
+
+# ------------------------------------------------------------
+# Experiment control
+# ------------------------------------------------------------
+experiment:
+  iterations: 20        # number of stochastic repetitions
+  base_seed: 42          # iteration i uses base_seed + i
+
+# ------------------------------------------------------------
+# Global seed (used before iteration loop)
+# ------------------------------------------------------------
+seed: 42
+
+draw_graph: True
+# ------------------------------------------------------------
+# Preprocessing
+# ------------------------------------------------------------
+preprocess:
+  subgraph: 
+    enabled: True
+    num_nodes: 20
+    max_nodes: 400
+    max_hops: 3
+
+  sparsify: 
+    enabled: True
+    avg_degree: 15
+
+verbose: True
+# # ------------------------------------------------------------
+# # Seeds / task data
+# # ------------------------------------------------------------
+# seeds:
+#   source: gwas           # gwas | opentargets
+#   pval_threshold: 5e-8
+#   max_seeds: null        # optional cap
+#   exclude_targets: true
+
+# # ------------------------------------------------------------
+# # Task definition
+# # ------------------------------------------------------------
+# task:
+#   name: target_rank
+#   disease: schizophrenia
+#   negatives: all         # all | matched | random
+#   metrics:
+#     - auc
+#     - aupr
+#     - top_k_enrichment
+#     - mean_rank
+
+# # ------------------------------------------------------------
+# # Hydra runtime settings
+# # ------------------------------------------------------------
+# hydra:
+#   run:
+#     dir: ${paths.output_root}/${project.run_name}
+#   sweep:
+#     dir: ${paths.output_root}/multirun/${project.run_name}
+#     subdir: ${hydra.job.num}
