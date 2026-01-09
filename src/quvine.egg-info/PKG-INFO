@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: quvine
+Version: 0.1.0
+Summary: QuVINE: Quantum View-based Network Embeddings
+Requires-Python: >=3.10
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: networkx
+Requires-Dist: pandas
+Requires-Dist: matplotlib
+Requires-Dist: hydra-core
+Requires-Dist: omegaconf
+Requires-Dist: gensim
+Requires-Dist: hiperwalk
