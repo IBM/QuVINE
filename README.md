@@ -1,1 +1,1 @@
-# qune: Quantum-enhanced Network Embeddings
+# QuVINE: Quantum-enabled View-Integrated Network Embeddings
