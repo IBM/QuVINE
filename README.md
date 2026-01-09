@@ -2,7 +2,7 @@
 
 ### Installation
 
-git clone https://github.com/<your-org>/QuVINE.git
+git clone [https://github.com/<your-org>/QuVINE.git](https://github.ibm.com/A-Bose/QuVINE.git)
 
 cd QuVINE
 
