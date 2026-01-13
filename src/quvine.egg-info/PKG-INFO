@@ -8,6 +8,8 @@ Requires-Dist: scipy
 Requires-Dist: networkx
 Requires-Dist: pandas
 Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: node2vec
 Requires-Dist: hydra-core
 Requires-Dist: omegaconf
 Requires-Dist: gensim

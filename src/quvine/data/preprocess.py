@@ -3,6 +3,10 @@ import numpy as np
 import random 
 from quvine.utils.utilities import get_stats
 
+def confidence_to_distance(w, eps=1e-6):
+    return -np.log(w + eps)
+
+
 def build_seed_neighborhood_subgraph(
     graph,
     seed_nodes,
@@ -101,31 +105,78 @@ def build_subgraph(cfg,
         
     return subgraph, subgraph_source, subgraph_target
 
-def sparsify_with_connectivity(cfg, graph, target_avg_degree=20, seed=42):
-    random.seed(seed)
+def sparsify_graph(
+    graph,
+    target_avg_degree=25,
+    max_degree=32,
+    seed=42,
+    verbose=False,
+):
+    """
+    Sparsify an unweighted PPI graph while preserving connectivity
+    and controlling degree (DTQW-safe).
 
-    # Start with a spanning tree (guarantees connectivity)
-    T = nx.minimum_spanning_tree(graph)
+    Parameters
+    ----------
+    graph : nx.Graph
+        Input unweighted graph (assumed undirected, connected or not).
+    target_avg_degree : int
+        Desired average degree after sparsification.
+    max_degree : int
+        Hard cap on node degree (important for DTQW).
+    seed : int
+        Random seed for reproducibility.
+    verbose : bool
+        Print stats after sparsification.
+
+    Returns
+    -------
+    sparse_graph : nx.Graph
+        Sparsified graph (largest connected component).
+    """
+
+    random.seed(seed)    
 
     n = graph.number_of_nodes()
     target_edges = int(target_avg_degree * n / 2)
 
-    remaining_edges = list(set(graph.edges()) - set(T.edges()))
-    needed = target_edges - T.number_of_edges()
+    # ---- Step 1: Build BFS spanning tree (connectivity backbone) ----
+    root = random.choice(list(graph.nodes()))
+    T = nx.bfs_tree(graph, root).to_undirected()
 
-    if needed > 0 and remaining_edges:
-        T.add_edges_from(
-            random.sample(remaining_edges, min(needed, len(remaining_edges)))
-        )
+    # ---- Step 2: Candidate edges (excluding backbone) ----
+    backbone_edges = set(T.edges())
+    remaining_edges = [
+        (u, v) for u, v in graph.edges()
+        if (u, v) not in backbone_edges and (v, u) not in backbone_edges
+    ]
 
+    # ---- Step 3: Degree-aware ordering (prefer low-degree nodes) ----
+    remaining_edges.sort(
+        key=lambda e: graph.degree(e[0]) + graph.degree(e[1])
+    )
+
+    # ---- Step 4: Add edges until target is reached (degree capped) ----
+    for u, v in remaining_edges:
+        if T.number_of_edges() >= target_edges:
+            break
+
+        if T.degree(u) < max_degree and T.degree(v) < max_degree:
+            T.add_edge(u, v)
+
+    # ---- Step 5: Final LCC (safety) ----
     lcc_nodes = max(nx.connected_components(T), key=len)
     sparse_graph = T.subgraph(lcc_nodes).copy()
-    
-    if cfg.verbose: 
-        sparse_graph_stats = get_stats(sparse_graph)
-        print("-"*10)
-        print("After Sparsification")
-        print(sparse_graph_stats)
-        print("-"*10)
-        
+
+    if verbose:
+        avg_deg = 2 * sparse_graph.number_of_edges() / sparse_graph.number_of_nodes()
+        max_deg = max(dict(sparse_graph.degree()).values())
+        print("-" * 30)
+        print("After sparsification")
+        print(f"Nodes: {sparse_graph.number_of_nodes()}")
+        print(f"Edges: {sparse_graph.number_of_edges()}")
+        print(f"Avg degree: {avg_deg:.2f}")
+        print(f"Max degree: {max_deg}")
+        print("-" * 30)
+
     return sparse_graph

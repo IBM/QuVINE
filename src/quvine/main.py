@@ -13,9 +13,11 @@ from quvine.utils.logging import setup_logging
 from quvine.utils.io import save_config 
 
 @hydra.main(
-    version_base="1.3", 
-    config_path="../configs/", 
-    config_name="config"
+    
+    config_path=None, 
+    config_name=None,
+    version_base="1.3"
+    
 )
 
 def main(cfg: DictConfig) -> None: 

@@ -10,7 +10,7 @@ from hydra.core.hydra_config import HydraConfig
 import pandas as pd 
 
 from quvine.data.data_loader import load_graph, load_gwas_data
-from quvine.data.preprocess import build_subgraph, sparsify_with_connectivity
+from quvine.data.preprocess import build_subgraph, sparsify_graph
 from quvine.views.generator import ViewBuilder
 from quvine.walks.base import BaseWalker
 from quvine.corpus.builder import CorpusBuilder
@@ -192,13 +192,15 @@ class Pipeline:
 
         scores_by_method = {}
 
-        for name, Z in embeddings.items():
-            scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
-                Z, seed_indices
-            )
-            scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
-                Z, seed_indices
-            )
+        for name, Z in store.items():
+            if self.cfg.eval.centroid:
+                scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
+                    Z, seed_indices
+                )
+            if self.cfg.eval.max_seed:
+                scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
+                    Z, seed_indices
+                )
             
                 
         ranking_df = evaluate_embeddings_ranking(
@@ -256,10 +258,12 @@ class Pipeline:
                                                     random_state=self.base_seed)
         
         if self.cfg.preprocess.sparsify.enabled: 
-            graph_data = sparsify_with_connectivity(self.cfg, 
-                                                    graph=graph_data, 
-                                                    target_avg_degree=self.cfg.preprocess.sparsify.avg_degree,
-                                                    seed=self.base_seed)
+            graph_data = sparsify_graph( 
+                                        graph=graph_data, 
+                                        target_avg_degree=self.cfg.preprocess.sparsify.avg_degree,
+                                        max_degree=self.cfg.preprocess.sparsify.max_degree,
+                                        seed=self.base_seed, 
+                                        verbose=self.cfg.verbose)
         return graph_data
             
     #--------------------------------
