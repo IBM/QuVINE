@@ -14,6 +14,8 @@ dependencies = [
     "networkx",
     "pandas",
     "matplotlib",
+    "scikit-learn",
+    "node2vec",
     "hydra-core",
     "omegaconf",
     "gensim",
