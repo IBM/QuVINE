@@ -1,34 +1,7 @@
 import random
 import networkx as nx 
-from quvine.utils.utilities import sample_rwr_walks_from_scores
+from quvine.utils.utilities import sample_walks_from_distribution
 
-# def generate_RWR_walks(G, 
-#                     root, 
-#                     num_walks=10, 
-#                     walk_length=5, 
-#                     restart_prob=0.5, 
-#                     view_nodes=None,
-#                     max_iter=100): 
-#     walks=[]
-#     for _ in range(num_walks):
-#         walk = [root]
-#         current_node = root
-#         for _ in range(walk_length - 1):
-#             neighbors = list(G.neighbors(current_node))
-            
-#             if view_nodes is not None: 
-#                 neighbors = [n for n in neighbors if n in view_nodes]
-#             if len(neighbors) == 0:
-#                 break
-#             if random.random() < restart_prob: 
-#                 walk.append(root)
-#             else:
-#                 walk.append(random.choice(neighbors))
-#             next_node = random.choice(neighbors)
-            
-#         walks.append(walk)
-        
-#     return walks
 
 def get_RWR_pagerank_scores(
     G,
@@ -95,7 +68,8 @@ def generate_RWR_pagerank_walks(G,
                                 num_walks=10, 
                                 walk_length=6, 
                                 restart_prob=0.5,
-                                max_iter=100):
+                                max_iter=100, 
+                                rng=None):
     
     rwr_scores = get_RWR_pagerank_scores(
         G,
@@ -104,10 +78,11 @@ def generate_RWR_pagerank_walks(G,
         view_nodes=view_nodes,
         max_iter=max_iter
     )
-    walks = sample_rwr_walks_from_scores(
+    walks = sample_walks_from_distribution(
         rwr_scores,
         num_walks=num_walks,
-        walk_length=walk_length
+        walk_length=walk_length, 
+        rng=rng
     )
     
     return walks

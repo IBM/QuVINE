@@ -31,12 +31,6 @@ def main(cfg: DictConfig) -> None:
     
     run_dir = Path(os.getcwd()) #hydra changes cwd
     orig_cwd = Path(get_original_cwd()) 
-    
-    cfg.runtime = {
-        "run_dir": str(run_dir),
-        "project_root": str(orig_cwd)
-    }
-    
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------

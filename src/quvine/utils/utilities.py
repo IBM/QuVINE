@@ -4,6 +4,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt 
 import random
+import warnings
 
 def get_stats(graph): 
     
@@ -61,10 +62,11 @@ def draw_graph(cfg, G, source=None, target=None, title="Graph", file_path=None):
     if file_path is not None: 
         fig.savefig(file_path, dpi=300, bbox_inches='tight')
         
-def sample_rwr_walks_from_scores(
+def sample_walks_from_distribution(
     rwr_scores,
     num_walks=10,
     walk_length=40,
+    rng=None,
     seed=None
 ):
     """
@@ -82,14 +84,42 @@ def sample_rwr_walks_from_scores(
     -------
     List[List[node]]
     """
-    rng = random.Random(seed)
+    
+    if rng is None and seed is not None:
+        warnings.warn(
+            "Using 'seed' is deprecated. Pass a numpy.random.Generator instead.",
+            DeprecationWarning,
+        )
+    
+    if rng is not None:
+        if not isinstance(rng, np.random.Generator):
+            raise TypeError("rng must be a numpy.random.Generator")
+        use_rng = rng
+        use_numpy = True
+    else:
+        # legacy behavior
+        use_rng = random.Random(seed)
+        use_numpy = False
 
     nodes = list(rwr_scores.keys())
-    probs = [rwr_scores[n] for n in nodes]
+    probs = np.array([rwr_scores[n] for n in nodes], dtype=float)
+    probs /= probs.sum()
 
     walks = []
     for _ in range(num_walks):
-        walk = rng.choices(nodes, weights=probs, k=walk_length)
+        if use_numpy:
+            walk = use_rng.choice(
+                nodes,
+                size=walk_length,
+                replace=True,
+                p=probs,
+            ).tolist()
+        else:
+            walk = use_rng.choices(
+                nodes,
+                weights=probs.tolist(),
+                k=walk_length,
+            )
         walks.append(walk)
     
     return walks

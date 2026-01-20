@@ -8,9 +8,9 @@ import json
 from omegaconf import OmegaConf,DictConfig
 from hydra.core.hydra_config import HydraConfig
 import pandas as pd 
-
+import time
 from quvine.data.data_loader import load_graph, load_gwas_data
-from quvine.data.preprocess import build_subgraph, sparsify_graph
+from quvine.data.prepare import PrepareGraphConfig, prepare_graph
 from quvine.views.generator import ViewBuilder
 from quvine.walks.base import BaseWalker
 from quvine.corpus.builder import CorpusBuilder
@@ -20,7 +20,6 @@ from quvine.analysis.compare import compare_embeddings
 from quvine.analysis.analyze import *
 from quvine.baselines import run_node2vec
 from quvine.fusion.fuse import fuse_embeddings
-from quvine.fusion.diagnostics import analyze_fusion
 from quvine.evaluation.ranking import (
     seed_centroid_scores,
     max_seed_cosine_scores,
@@ -30,6 +29,8 @@ from quvine.evaluation.ranking import (
 # from utils.io import save_embeddings, save_metadata 
 from quvine.utils.seed import set_global_seed
 from quvine.utils.utilities import *
+from joblib import Parallel, delayed
+
 
 class Pipeline: 
     """
@@ -49,8 +50,8 @@ class Pipeline:
     def __init__(self, cfg:DictConfig): 
         self.cfg = cfg
         self.log = logging.getLogger(self.__class__.__name__)
-        self.run_dir = Path(cfg.runtime.run_dir)
-        if self.run_dir.is_dir(): 
+        self.run_dir = Path(cfg.runtime.output_dir)
+        if self.run_dir.exists():
             if self.cfg.verbose: 
                 print(f"Directory {self.run_dir} exists")
         else: 
@@ -66,7 +67,13 @@ class Pipeline:
         if self.cfg.verbose: 
             print(get_stats(graph_data))
         source, target = self._load_gwas_data(graph_data)
-        graph_data = self._preprocess_graph(graph_data, source, target)
+        #graph_data = self._preprocess_graph(graph_data, source, target)
+        
+        ## Preprocess graph 
+        graph_data = self._preprocess_graph( 
+                                            graph_data, 
+                                            source, 
+                                            target)
         
         if self.cfg.draw.graph: 
             draw_graph(cfg=self.cfg, 
@@ -83,7 +90,7 @@ class Pipeline:
             res = self._run_single_iteration(it, graph_data, source, target)
             all_results.append(res)
 
-        ranking_df, comparison_df, fusion_df = self._post_process(all_results)
+        ranking_df, comparison_df = self._post_process(all_results)
         
         out_dir = HydraConfig.get().runtime.output_dir
         os.makedirs(out_dir, exist_ok=True)
@@ -95,9 +102,7 @@ class Pipeline:
 
         comparison_path = os.path.join(out_dir, "embedding_comparison.csv")
         comparison_df.to_csv(comparison_path, index=False)
-        
-        fusion_path = os.path.join(out_dir, "fusion_diagnostics.csv")
-        fusion_df.to_csv(fusion_path, index=False)
+
         
         cfg_path = os.path.join(out_dir, "config.yaml")
         with open(cfg_path, "w") as f:
@@ -126,24 +131,94 @@ class Pipeline:
     
     def _run_single_iteration(self, it, graph_data, source, target):
         
-        corpus_builder = {kind: CorpusBuilder() for kind in self.cfg.walks.kinds}
+        beg_time = time.time()
         
-        for root in graph_data.nodes: 
-            
-            views = self._build_views(graph_data, root, it)
-            walk_outputs = self._run_walks_for_root(graph_data, root, views)
-            
-            for walk_kind, walks in walk_outputs.items(): 
-                corpus_builder[walk_kind].add(root, walks)
+        roots = list(graph_data.nodes)
+        node2idx = {node: i for i, node in enumerate(sorted(roots))}
+        corpus_builder = {kind: CorpusBuilder()
+                    for kind in self.cfg.walks.kinds}
         
-        all_corpora = {kind: builder.build() for kind, builder in corpus_builder.items()}
+        # decide serial vs parallel 
+        n_roots = len(roots)
+        if n_roots < 2000 or self.cfg.runtime.n_jobs == 1: 
+            chunks = [roots]
+            n_jobs = 1 
+        else: 
+            chunk_size = self.cfg.runtime.chunk_size 
+            chunks = list(self._chunkify(roots, chunk_size))
+            n_jobs = self.cfg.runtime.n_jobs 
+        
+        parallel = Parallel(n_jobs=n_jobs, 
+                            backend='loky', 
+                            batch_size=1, 
+                            prefer='processes'
+                            )
+
+        valid_roots = 0
+        
+        for chunk_results in parallel(
+            delayed(self._process_root_chunk)(graph_data, chunk, node2idx, it)
+            for chunk in chunks
+            ):
+        
+            for root, walk_outputs in chunk_results: 
+                if not walk_outputs or all(len(w)==0 for w in walk_outputs.values()):
+                    continue 
+                valid_roots +=1 
+                
+                for walk_kind, walks in walk_outputs.items(): 
+                    if len(walks) == 0: 
+                        continue 
+                    corpus_builder[walk_kind].add(root, walks)
+    
+        assert valid_roots > 0, "No valid roots with walks were found."
+        
+        all_corpora = {kind: builder.build() 
+                    for kind, builder in corpus_builder.items()}
+        
         
         embeddings = self._train_embeddings(graph_data, all_corpora)
         
         store = EmbeddingStore()
         for name, Z in embeddings.items():
             store.add(name, Z)
+        end_time = time.time() 
+        time_taken = end_time - beg_time
+        if self.cfg.verbose:
+            print(f"Time taken for one QuVINE iteration {time_taken/60} minutes")
         
+        # compare embeddings 
+        comparison_metrics = compare_embeddings(
+                                        store,
+                                        cca_components=self.cfg.analysis.cca_components,
+                                        knn_k=self.cfg.analysis.knn_k,
+                                        )
+        
+        ## fuse embeddings
+        if self.cfg.fusion.enabled:
+            
+            beg_time = time.time() 
+            
+            L = nx.normalized_laplacian_matrix(G=graph_data, 
+                                        nodelist=graph_data.nodes).toarray().astype(np.float32)
+            
+            fused_list, fuse_metric = fuse_embeddings(
+                                        store,
+                                        method=self.cfg.fusion.method,
+                                        k=self.cfg.fusion.k,
+                                        L=L
+                                    )
+
+            for i, Z_fused in enumerate(fused_list): 
+                store.add(fuse_metric[i], Z_fused)
+
+            end_time = time.time() 
+            time_taken = end_time - beg_time
+            if self.cfg.verbose:
+                print(f"Time taken for fusion {time_taken/60} minutes")
+        
+        ## baselines
+        beg_time = time.time()
         if self.cfg.baselines.node2vec.enabled:
             Z_n2v = run_node2vec(
                         graph=graph_data,
@@ -159,39 +234,19 @@ class Pipeline:
                         seed=self.cfg.baselines.node2vec.seed
                         )
             store.add("node2vec", Z_n2v)
+            end_time = time.time() 
+            time_taken = end_time - beg_time
+            if self.cfg.verbose:
+                print(f"Time taken for one node2vec iteration {time_taken/60} minutes")
         
         
-        # compare embeddings 
-        comparison_metrics = compare_embeddings(
-                                        store,
-                                        cca_components=self.cfg.analysis.cca_components,
-                                        knn_k=self.cfg.analysis.knn_k,
-                                        )
-        
-        ## fuse embeddings
-        fusion_results = {}
-
-        if self.cfg.fusion.enabled:
-            Z_fused, _ = fuse_embeddings(
-                store,
-                method=self.cfg.fusion.method,
-                k=self.cfg.fusion.k,
-            )
-
-            fusion_results = analyze_fusion(
-                Z_fused,
-                n_views=len(store.names()),
-            )
-
-            store.add("fused", Z_fused)
-        
+        ## evaluation 
+    
         seed_indices = [
             i for i, node in enumerate(graph_data.nodes)
             if node in source
         ]
-
         scores_by_method = {}
-
         for name, Z in store.items():
             if self.cfg.eval.centroid:
                 scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
@@ -201,8 +256,7 @@ class Pipeline:
                 scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
                     Z, seed_indices
                 )
-            
-                
+        
         ranking_df = evaluate_embeddings_ranking(
             scores_by_method=scores_by_method,
             subgraph=graph_data,
@@ -219,10 +273,32 @@ class Pipeline:
         return {
                 "iteration": it,
                 "ranking_df": ranking_df,
-                "comparison": comparison_metrics,
-                "fusion": fusion_results,
+                "comparison": comparison_metrics
             }
 
+    #-----------------
+    # Preprocess
+    # ----------------
+    
+    def _preprocess_graph(self, graph_data, source, target):
+        cfg_pg = PrepareGraphConfig(
+                            subsample_nodes=self.cfg.preprocess.subsample.enabled, 
+                            max_nodes=self.cfg.preprocess.subsample.max_nodes, 
+                            radius=self.cfg.preprocess.subsample.radius,
+                            sparsify_edges=self.cfg.preprocess.sparsify.enabled,
+                            retain_ratio=self.cfg.preprocess.sparsify.retain_ratio,
+                            max_degree=self.cfg.preprocess.sparsify.max_degree,
+                            scoring=self.cfg.preprocess.sparsify.scoring,
+                            verbose=self.cfg.verbose
+                            )
+        graph_data = prepare_graph(
+                            cfg_pg, 
+                            graph=graph_data, 
+                            seeds=source, 
+                            targets=target, 
+                            seed=self.cfg.seed
+                            )
+        return graph_data 
     
     #-----------------
     # Data Loading
@@ -242,42 +318,49 @@ class Pipeline:
         set_global_seed(seed)
         self.log.debug("Iteration seed set to %d", seed)
         
-    #-----------------
-    # Preprocess
-    # ----------------
-    
-    def _preprocess_graph(self, graph_data, seeds, targets): 
-        if self.cfg.preprocess.subgraph.enabled: 
-            graph_data, source, target = build_subgraph(self.cfg, 
-                                                    graph=graph_data, 
-                                                    seeds=seeds, 
-                                                    targets=targets, 
-                                                    num_nodes=self.cfg.preprocess.subgraph.num_nodes, 
-                                                    max_hops=self.cfg.preprocess.subgraph.max_hops, 
-                                                    max_nodes=self.cfg.preprocess.subgraph.max_nodes, 
-                                                    random_state=self.base_seed)
-        
-        if self.cfg.preprocess.sparsify.enabled: 
-            graph_data = sparsify_graph( 
-                                        graph=graph_data, 
-                                        target_avg_degree=self.cfg.preprocess.sparsify.avg_degree,
-                                        max_degree=self.cfg.preprocess.sparsify.max_degree,
-                                        seed=self.base_seed, 
-                                        verbose=self.cfg.verbose)
-        return graph_data
-            
+
     #--------------------------------
     # Build structured, multi-views
     # -------------------------------
+    def _chunkify(self, seq, chunk_size): 
+        for i in range(0, len(seq), chunk_size): 
+            yield seq[i:i + chunk_size]
     
-    def _build_views(self, graph_data, root, it):
+    def _process_root(self, graph_data, root, node2idx, it): 
         
-        view_gen = ViewBuilder(cfg=self.cfg, iteration_seed=self.base_seed+it)
+        idx = node2idx[root]
+        seed = (self.cfg.experiment.base_seed + 10000 * it + idx)
+        rng = np.random.default_rng(seed)
+        
+        views = self._build_views(graph_data, root, rng) 
+        walk_outputs = self._run_walks_for_root(graph_data, root, views, rng) 
+        
+        if not walk_outputs or all(len(walks) == 0 for walks in walk_outputs.values()):
+            return root, {}   # or mark as invalid
+        else:
+            return root, walk_outputs
+    
+    def _process_root_chunk(self, graph_data, roots, node2idx, it):
+        """
+        Process a batch of roots inside a single worker process.
+        Returns a list of (root, walk_outputs).
+        """
+        results = []
+
+        for root in roots:
+            root, walk_outputs = self._process_root(graph_data, root, node2idx, it)
+            results.append((root, walk_outputs))
+
+        return results
+    
+    def _build_views(self, graph_data, root, rng):
+        
+        view_gen = ViewBuilder(cfg=self.cfg, rng=rng)
         return view_gen.build(graph_data, root)
     
-    def _run_walks_for_root(self, graph_data, root, views): 
+    def _run_walks_for_root(self, graph_data, root, views, rng): 
         
-        walker = BaseWalker(cfg=self.cfg)
+        walker = BaseWalker(cfg=self.cfg, rng=rng)
         all_walks = {k: [] for k in self.cfg.walks.kinds}
         
         for view in views: 
@@ -289,13 +372,11 @@ class Pipeline:
             out = walker.run(graph_data, root, view_nodes)
             
             for walk_kind, walks in out.items(): 
-                # self.log.info(
-                #     "root=%s kind=%s n_walks=%d",
-                #     root, walk_kind, len(walks)
-                # )
                 all_walks[walk_kind].extend(walks)
         
         return all_walks
+    
+
         
     def _train_embeddings(self, graph_data, all_corpora):
         embeddings = {} 
@@ -343,21 +424,8 @@ class Pipeline:
                     })
 
         comparison_df = pd.DataFrame(comparison_rows)
-        
-        fusion_rows = []
 
-        for r in all_results:
-            it = r["iteration"]
-            for name, value in r["fusion"].items():
-                fusion_rows.append({
-                    "iteration": it,
-                    "metric": name,
-                    "value": value,
-                })
-
-        fusion_df = pd.DataFrame(fusion_rows)
-
-        return ranking_results_df, comparison_df, fusion_df
+        return ranking_results_df, comparison_df
         
     def _plot_all(self, ranking_df, out_dir):
         

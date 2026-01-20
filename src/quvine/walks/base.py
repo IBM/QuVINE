@@ -1,6 +1,7 @@
 from quvine.walks.rwr import generate_RWR_pagerank_walks
 from quvine.walks.ctqw import generate_CTQW_walks
 from quvine.walks.dtqw import generate_DTQW_walks
+import numpy as np 
 
 WALKS={
     "rwr": generate_RWR_pagerank_walks,
@@ -15,16 +16,19 @@ class BaseWalker:
     Subclasses must implement `_generate_walks`.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, rng):
         self.cfg = cfg
+        self.rng = rng
         self.kinds = list(cfg.walks.kinds)
-
+        
+        assert isinstance(rng, np.random.Generator)
+        
         unknown = set(self.kinds) - WALKS.keys() 
         if unknown: 
             raise ValueError(f"Unknown walk kinds: {unknown}")
 
         
-    def run(self, graph, root, view_nodes):
+    def run(self, graph, root, view_nodes=None):
         """Run the walk 
 
         Args:
@@ -42,7 +46,7 @@ class BaseWalker:
         
         return out 
     
-    def _run_walk(self, kind, graph, root, view_nodes): 
+    def _run_walk(self, kind, graph, root, view_nodes=None): 
         
         if kind == "rwr": 
             return generate_RWR_pagerank_walks(
@@ -52,7 +56,8 @@ class BaseWalker:
             num_walks=self.cfg.walks.num_walks,
             walk_length=self.cfg.walks.walk_length, 
             restart_prob=self.cfg.walks.restart_prob,
-            max_iter=self.cfg.walks.max_iter
+            max_iter=self.cfg.walks.max_iter, 
+            rng=self.rng
             )
         elif kind == "ctqw": 
             return generate_CTQW_walks(
@@ -61,8 +66,9 @@ class BaseWalker:
             view_nodes=view_nodes,
             num_walks=self.cfg.walks.num_walks,
             walk_length=self.cfg.walks.walk_length, 
+            time=self.cfg.walks.time,
             steps=self.cfg.walks.steps,
-            seed=self.cfg.seed
+            rng=self.rng
             )
         elif kind == "dtqw": 
             return generate_DTQW_walks(
@@ -73,5 +79,5 @@ class BaseWalker:
             walk_length=self.cfg.walks.walk_length, 
             steps=self.cfg.walks.steps,
             coin=self.cfg.walks.coin, 
-            seed=self.cfg.seed
+            rng=self.rng
             )

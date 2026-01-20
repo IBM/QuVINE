@@ -1,7 +1,7 @@
 import networkx as nx 
 import numpy as np
 import hiperwalk as hpw
-from quvine.utils.utilities import sample_rwr_walks_from_scores
+from quvine.utils.utilities import sample_walks_from_distribution
 
 
 def get_coined_hiperwalk_scores(G, root, view_nodes=None, steps: int=25, coin: str="grover"): 
@@ -24,6 +24,7 @@ def get_coined_hiperwalk_scores(G, root, view_nodes=None, steps: int=25, coin: s
     node2i = {n:i for i,n in enumerate(nodes)}
     i2node = {i:n for n,i in node2i.items()}
     G_int = nx.relabel_nodes(G,node2i, copy=True)
+    
     
     #build hiperwalk graph + dtqw 
     hg = hpw.Graph(G_int)
@@ -48,8 +49,19 @@ def get_coined_hiperwalk_scores(G, root, view_nodes=None, steps: int=25, coin: s
     return scores
 
 def generate_DTQW_walks(G, root, view_nodes=None, num_walks: int = 10, 
-                                walk_length: int = 6, steps: int=25, coin: str="grover", seed: int | None=None):
-    scores = get_coined_hiperwalk_scores(G, root=root, view_nodes=view_nodes, 
-                                        steps=steps, coin=coin)
-    walks = sample_rwr_walks_from_scores(scores, num_walks=num_walks, walk_length=walk_length, seed=seed)
+                                walk_length: int = 6, 
+                                steps: int=25, 
+                                coin: str="grover", 
+                                rng=None):
+    assert isinstance(rng, np.random.Generator)
+    scores = get_coined_hiperwalk_scores(G, 
+                                        root=root, 
+                                        view_nodes=view_nodes, 
+                                        steps=steps, 
+                                        coin=coin)
+    
+    walks = sample_walks_from_distribution(scores, 
+                                        num_walks=num_walks, 
+                                        walk_length=walk_length, 
+                                        rng=rng)
     return walks

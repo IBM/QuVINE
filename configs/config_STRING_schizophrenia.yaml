@@ -5,46 +5,54 @@ graph:
 disease:
   name: schizophrenia
 runtime:
-  name: qune
+  name: quvine
   run_name: ${now:%Y-%m-%d_%H-%M-%S}
   run_dir: STRING_schizophrenia
+  output_dir: /dccstor/boseukb/Q/NetMed/qnetbio/outputs/${runtime.run_dir}/${runtime.run_name}
+  n_jobs: 16
+  chunk_size: 30
+hydra:
+  run:
+    dir: ${runtime.output_dir}
+  sweep:
+    dir: ${runtime.output_dir}
 experiment:
-  iterations: 2
+  iterations: 10
   base_seed: 42
 seed: 42
 draw:
   graph: true
   verbose: false
 preprocess:
-  subgraph:
+  subsample:
     enabled: false
-    num_nodes: 20
-    max_nodes: 400
-    max_hops: 4
+    max_nodes: 600
+    radius: 4
   sparsify:
     enabled: true
-    avg_degree: 25
-    max_degree: 32
+    retain_ratio: 0.4
+    max_degree: 30
+    scoring: common_neighbors
 verbose: true
 plots: true
 views:
   num_views: 8
   constrained: true
-  max_degree: 3
-  max_nodes: 20
-  max_edges: 40
-  radius: 4
+  max_degree: 7
+  max_nodes: 70
+  max_edges: 250
 walks:
   kinds:
   - rwr
   - ctqw
   - dtqw
-  num_walks: 10
+  num_walks: 8
   walk_length: 6
-  restart_prob: 0.15
-  steps: 20
+  restart_prob: 0.45
+  steps: 16
+  time: 1
   coin: grover
-  max_iter: 1000
+  max_iter: 600
 dimension: 64
 window: 5
 min_count: 1
@@ -71,8 +79,8 @@ baselines:
     seed: ${seed}
 fusion:
   enabled: true
-  method: concatenate
-  k: 10
+  method: all
+  k: 40
 analysis:
   cca_components: 10
   knn_k: 5
@@ -83,3 +91,5 @@ eval:
   - 80
   n_repeats: 20
   deg_tol: 0.1
+  centroid: false
+  max_seed: true
