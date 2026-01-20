@@ -1,74 +1,141 @@
 import networkx as nx
 
 
-# def unconstrained_view(
-#                     G, 
-#                     root,
-#                     num_views, 
-#                     radius, 
-#                     max_nodes, 
-#                     rng
-#                     ):
-#     views = [] 
-#     #unconstrained view
-#     ego_nodes = list(nx.single_source_shortest_path_length(G, 
-#                                                         root, 
-#                                                         cutoff=radius).keys())
-#     for _ in range(num_views):
-#         #random subsample
-#         k = min(len(ego_nodes), max_nodes)
-#         view = set(random.sample(ego_nodes, k))
-#         view.add(root)
-#         views.append(view)
-        
-#     return views 
+import numpy as np
 
-def constrained_view(G, 
-                    root, 
-                    num_views, 
-                    max_nodes,
-                    max_edges,
-                    max_degree,
-                    rng
-                    ): 
+def constrained_view(
+    G,
+    root,
+    num_views,
+    max_nodes,
+    max_edges,
+    max_degree,
+    rng,
+    degree_norm=False,
+    degree_alpha=0.5,
+    eps=1e-6,
+):
+    """
+    Build constrained ego-views with optional degree-normalized expansion.
+
+    Parameters
+    ----------
+    degree_norm : bool
+        If True, neighbors are sampled with probability proportional to
+        (deg + eps)^(-degree_alpha)
+    degree_alpha : float
+        Strength of degree downweighting (0.5 recommended)
+    """
+
     neighbors = list(G.neighbors(root))
-    views = [] 
+    views = []
+
+    def sample_frontier(nodes):
+        if not degree_norm or len(nodes) == 0:
+            rng.shuffle(nodes)
+            return nodes
+
+        degrees = np.array([G.degree(v) for v in nodes], dtype=float)
+        weights = 1.0 / np.power(degrees + eps, degree_alpha)
+        weights /= weights.sum()
+
+        # sample without replacement
+        return list(rng.choice(nodes, size=len(nodes), replace=False, p=weights))
+
     for _ in range(num_views):
         view_nodes = {root}
-        view_edges = 0 
-        
-        #randomize expansion order 
-        frontier = list(neighbors)
-        rng.shuffle(frontier)
-                
-        while frontier: 
-            candidate_node = frontier.pop()
-            
-            if candidate_node in view_nodes:
-                continue 
-            
-            #compute incremental edges only 
-            new_edges = sum(1 for v in view_nodes if G.has_edge(candidate_node, v))
-            
-            if view_edges + new_edges > max_edges: 
-                continue 
-            
-            #local degree check 
-            if new_edges > max_degree: 
-                continue 
-            
-            view_nodes.add(candidate_node) 
-            view_edges += new_edges 
-            
-            for neighbor in G.neighbors(candidate_node): 
-                if neighbor not in view_nodes: 
-                    frontier.append(neighbor)
-                
-            #enforce sizes 
-            if len(view_nodes) >= max_nodes or view_edges >= max_edges: 
-                break 
-            
+        view_edges = 0
+
+        frontier = sample_frontier(neighbors.copy())
+
+        while frontier:
+            candidate = frontier.pop()
+
+            if candidate in view_nodes:
+                continue
+
+            # count incremental edges only
+            new_edges = sum(
+                1 for v in view_nodes if G.has_edge(candidate, v)
+            )
+
+            if view_edges + new_edges > max_edges:
+                continue
+
+            if new_edges > max_degree:
+                continue
+
+            view_nodes.add(candidate)
+            view_edges += new_edges
+
+            # expand frontier
+            for nbr in G.neighbors(candidate):
+                if nbr in view_nodes:
+                    continue
+
+                if not degree_norm:
+                    frontier.append(nbr)
+                else:
+                    # probabilistic degree-normalized frontier growth
+                    deg = G.degree(nbr)
+                    p_keep = 1.0 / np.power(deg + eps, degree_alpha)
+                    if rng.random() < min(1.0, p_keep):
+                        frontier.append(nbr)
+
+            if len(view_nodes) >= max_nodes or view_edges >= max_edges:
+                break
+
         views.append(view_nodes)
+
+    return views
+
+
+# def constrained_view(G, 
+#                     root, 
+#                     num_views, 
+#                     max_nodes,
+#                     max_edges,
+#                     max_degree,
+#                     rng
+#                     ): 
+#     neighbors = list(G.neighbors(root))
+#     views = [] 
+#     for _ in range(num_views):
+#         view_nodes = {root}
+#         view_edges = 0 
         
-    return views 
+#         #randomize expansion order 
+#         frontier = list(neighbors)
+#         rng.shuffle(frontier)
+                
+#         while frontier: 
+#             candidate_node = frontier.pop()
+            
+#             if candidate_node in view_nodes:
+#                 continue 
+            
+#             #compute incremental edges only 
+#             new_edges = sum(1 for v in view_nodes if G.has_edge(candidate_node, v))
+            
+#             if view_edges + new_edges > max_edges: 
+#                 continue 
+            
+#             #local degree check 
+#             if new_edges > max_degree: 
+#                 continue 
+            
+#             view_nodes.add(candidate_node) 
+#             view_edges += new_edges 
+            
+#             for neighbor in G.neighbors(candidate_node): 
+#                 if neighbor not in view_nodes: 
+#                     frontier.append(neighbor)
+                
+#             #enforce sizes 
+#             if len(view_nodes) >= max_nodes or view_edges >= max_edges: 
+#                 break 
+            
+#         views.append(view_nodes)
+        
+#     return views 
 

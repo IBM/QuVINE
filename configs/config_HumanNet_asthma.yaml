@@ -9,8 +9,8 @@ runtime:
   run_name: ${now:%Y-%m-%d_%H-%M-%S}
   run_dir: HumanNet_asthma
   output_dir: /dccstor/boseukb/Q/NetMed/qnetbio/outputs/${runtime.run_dir}/${runtime.run_name}
-  n_jobs: 16
-  chunk_size: 30
+  n_jobs: 4
+  chunk_size: 5
 hydra:
   run:
     dir: ${runtime.output_dir}
@@ -30,38 +30,40 @@ preprocess:
     radius: 4
   sparsify:
     enabled: true
-    retain_ratio: 0.7
-    max_degree: 42
+    retain_ratio: 0.3
+    max_degree: 18
     scoring: common_neighbors
 verbose: true
 plots: true
 views:
-  num_views: 8
+  num_views: 4
   constrained: true
-  max_degree: 9
-  max_nodes: 80
-  max_edges: 350
+  max_degree: 2
+  max_nodes: 24
+  max_edges: 50
+  degree_norm: true 
+  degree_alpha: 0.6
 walks:
   kinds:
   - rwr
   - ctqw
   - dtqw
-  num_walks: 10
-  walk_length: 8
-  restart_prob: 0.35
-  steps: 20
-  time: 1.2
+  num_walks: 6
+  walk_length: 6
+  restart_prob: 0.5
+  steps: 8
+  time: 0.7
   coin: grover
-  max_iter: 1000
+  max_iter: 300
 dimension: 64
-window: 5
+window: 10
 min_count: 1
 workers: 8
 train:
   embedding_dim: ${dimension}
   window: ${window}
   sg: 1
-  negative: 10
+  negative: 15
   workers: ${workers}
   min_count: ${min_count}
   epochs: 100
@@ -69,10 +71,10 @@ baselines:
   node2vec:
     enabled: true
     dimensions: ${dimension}
-    walk_length: 8
-    num_walks: 10
+    walk_length: 40
+    num_walks: 20
     p: 1
-    q: 0.5
+    q: 0.25
     window: ${window}
     min_count: ${min_count}
     workers: ${workers}

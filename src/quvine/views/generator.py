@@ -15,7 +15,9 @@ class ViewBuilder:
                                 max_nodes=self.cfg.views.max_nodes, 
                                 max_edges=self.cfg.views.max_edges,
                                 max_degree=self.cfg.views.max_degree,
-                                rng=self.rng
+                                rng=self.rng, 
+                                degree_norm=self.cfg.views.degree_norm,
+                                degree_alpha=self.cfg.views.degree_alpha
                                 )    
     
         return views
