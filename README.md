@@ -1,5 +1,6 @@
 # QuVINE: Quantum-enabled View-Integrated Network Embeddings
 
+We introduced QuVINE, a quantum-enhanced multi-view network embedding framework designed to address the inherent complexity and heterogeneity of biological data in precision medicine. By moving beyond the limitations of classical, single-view random walks, QuVINE leverages quantum-inspired dynamics to capture higher-order topological features and long-range dependencies that are frequently lost in standard diffusion-based models.
 
 ### Citation
 
