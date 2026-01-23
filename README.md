@@ -1,5 +1,15 @@
 # QuVINE: Quantum-enabled View-Integrated Network Embeddings
 
+
+### Citation
+
+Please cite the following article if you use QuVINE:
+
+Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine
+A. Bose, F. Utro and L. Parida (to be submitted)
+
+
+
 ### Installation
 
 Please follow these steps to run and execute QuVINE. 
