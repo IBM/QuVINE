@@ -1,17 +1,3 @@
-# Copyright 2021, IBM Corporation.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from __future__ import annotations 
 
 import logging
@@ -80,8 +66,12 @@ class Pipeline:
         graph_data = self._load_graph()
         if self.cfg.verbose: 
             print(get_stats(graph_data))
-        source, target = self._load_gwas_data(graph_data)
-        #graph_data = self._preprocess_graph(graph_data, source, target)
+        
+        if self.cfg.gwas_target:
+            source, target = self._load_gwas_data(graph_data)
+        else:
+            source = None
+            target = None
         
         ## Preprocess graph 
         graph_data = self._preprocess_graph( 
@@ -103,41 +93,16 @@ class Pipeline:
 
             res = self._run_single_iteration(it, graph_data, source, target)
             all_results.append(res)
-
-        ranking_df, comparison_df = self._post_process(all_results)
         
-        out_dir = HydraConfig.get().runtime.output_dir
-        os.makedirs(out_dir, exist_ok=True)
-
-        self.log.info("Saving outputs to %s", out_dir)
+        if self.cfg.evaluation.enabled:
+            # process and save evaluation results
+            self._save_evaluation_results(all_results=all_results, nodes=list(graph_data.nodes))  
         
-        ranking_path = os.path.join(out_dir, "ranking_results.csv")
-        ranking_df.to_csv(ranking_path, index=False)
-
-        comparison_path = os.path.join(out_dir, "embedding_comparison.csv")
-        comparison_df.to_csv(comparison_path, index=False)
-
-        
-        cfg_path = os.path.join(out_dir, "config.yaml")
-        with open(cfg_path, "w") as f:
-            f.write(OmegaConf.to_yaml(self.cfg))
+        if self.cfg.save_embeddings:
+            # save and output embeddings
+            self._save_embeddings(all_results=all_results)   
             
-        summary = {
-                "n_iterations": self.n_iters,
-                "n_nodes": len(graph_data.nodes),
-                "walks": OmegaConf.to_container(self.cfg.walks.kinds, resolve=True),
-                }
-
-        with open(os.path.join(out_dir, "summary.json"), "w") as f:
-            json.dump(summary, f, indent=2)
-
-        if self.cfg.plots:
-            self._plot_all(
-                    ranking_df=ranking_df, 
-                    out_dir=out_dir
-                    )
-            
-        self.log.info("All results saved to %s", out_dir)
+        
 
     #-----------------
     # One iteration
@@ -201,12 +166,37 @@ class Pipeline:
         if self.cfg.verbose:
             print(f"Time taken for one QuVINE iteration {time_taken/60} minutes")
         
-        # compare embeddings 
-        comparison_metrics = compare_embeddings(
-                                        store,
-                                        cca_components=self.cfg.analysis.cca_components,
-                                        knn_k=self.cfg.analysis.knn_k,
-                                        )
+        ## baselines
+        beg_time = time.time()
+        if self.cfg.baselines.node2vec.enabled:
+            Z_n2v = run_node2vec(
+                        graph=graph_data,
+                        nodes=graph_data.nodes,
+                        dimensions=self.cfg.baselines.node2vec.dimensions,
+                        walk_length=self.cfg.baselines.node2vec.walk_length,
+                        num_walks=self.cfg.baselines.node2vec.num_walks,
+                        p=self.cfg.baselines.node2vec.p,
+                        q=self.cfg.baselines.node2vec.q,
+                        window=self.cfg.baselines.node2vec.window,
+                        min_count=self.cfg.baselines.node2vec.min_count,
+                        workers=self.cfg.baselines.node2vec.workers,
+                        seed=self.cfg.baselines.node2vec.seed
+                        )
+            store.add("node2vec", Z_n2v)
+            end_time = time.time() 
+            time_taken = end_time - beg_time
+            if self.cfg.verbose:
+                print(f"Time taken for one node2vec iteration {time_taken/60} minutes")
+        
+        if self.cfg.compare_embeddings: 
+            # compare embeddings 
+            comparison_metrics = compare_embeddings(
+                                            store,
+                                            cca_components=self.cfg.analysis.cca_components,
+                                            knn_k=self.cfg.analysis.knn_k,
+                                            )
+        else: 
+            comparison_metrics = None
         
         ## fuse embeddings
         if self.cfg.fusion.enabled:
@@ -231,62 +221,48 @@ class Pipeline:
             if self.cfg.verbose:
                 print(f"Time taken for fusion {time_taken/60} minutes")
         
-        ## baselines
-        beg_time = time.time()
-        if self.cfg.baselines.node2vec.enabled:
-            Z_n2v = run_node2vec(
-                        graph=graph_data,
-                        nodes=graph_data.nodes,
-                        dimensions=self.cfg.baselines.node2vec.dimensions,
-                        walk_length=self.cfg.baselines.node2vec.walk_length,
-                        num_walks=self.cfg.baselines.node2vec.num_walks,
-                        p=self.cfg.baselines.node2vec.p,
-                        q=self.cfg.baselines.node2vec.q,
-                        window=self.cfg.baselines.node2vec.window,
-                        min_count=self.cfg.baselines.node2vec.min_count,
-                        workers=self.cfg.baselines.node2vec.workers,
-                        seed=self.cfg.baselines.node2vec.seed
-                        )
-            store.add("node2vec", Z_n2v)
-            end_time = time.time() 
-            time_taken = end_time - beg_time
-            if self.cfg.verbose:
-                print(f"Time taken for one node2vec iteration {time_taken/60} minutes")
         
-        
-        ## evaluation 
-    
-        seed_indices = [
-            i for i, node in enumerate(graph_data.nodes)
-            if node in source
-        ]
-        scores_by_method = {}
-        for name, Z in store.items():
-            if self.cfg.eval.centroid:
-                scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
-                    Z, seed_indices
-                )
-            if self.cfg.eval.max_seed:
-                scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
-                    Z, seed_indices
-                )
-        
-        ranking_df = evaluate_embeddings_ranking(
-            scores_by_method=scores_by_method,
-            subgraph=graph_data,
-            seeds=source,
-            targets=target,
-            nodes=graph_data.nodes,
-            k_values=self.cfg.eval.k_values,
-            n_repeats=self.cfg.eval.n_repeats,
-            deg_tol=self.cfg.eval.deg_tol,
-            iteration=it,
-        )
-        # standard metadata for analysis 
-        
-        return {
-                "iteration": it,
-                "ranking_df": ranking_df,
+        ## target prioritization evaluation 
+        if self.cfg.evaluation.enabled: 
+            
+            seed_indices = [
+                i for i, node in enumerate(graph_data.nodes)
+                if node in source
+            ]
+            scores_by_method = {}
+            for name, Z in store.items():
+                if self.cfg.eval.centroid:
+                    scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
+                        Z, seed_indices
+                    )
+                if self.cfg.eval.max_seed:
+                    scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
+                        Z, seed_indices
+                    )
+            
+            ranking_df = evaluate_embeddings_ranking(
+                scores_by_method=scores_by_method,
+                subgraph=graph_data,
+                seeds=source,
+                targets=target,
+                nodes=graph_data.nodes,
+                k_values=self.cfg.eval.k_values,
+                n_repeats=self.cfg.eval.n_repeats,
+                deg_tol=self.cfg.eval.deg_tol,
+                iteration=it,
+            )
+            # standard metadata for analysis 
+            
+            return {
+                    "iteration": it,
+                    "ranking_df": ranking_df,
+                    "comparison": comparison_metrics
+                }
+        else: 
+            return {
+                "iteration": it, 
+                "embeddings": store, 
+                "nodes": list(graph_data.nodes), 
                 "comparison": comparison_metrics
             }
 
@@ -411,8 +387,45 @@ class Pipeline:
             embeddings[kind] = Z
             
         return embeddings
+    
+    def _save_evaluation_results(self, all_results, nodes):
         
-    def _post_process(self, all_results):
+        ranking_df = self._post_process_ranking(all_results)
+        comparison_df = self._post_process_comparison(all_results)
+            
+        out_dir = HydraConfig.get().runtime.output_dir
+        os.makedirs(out_dir, exist_ok=True)
+
+        self.log.info("Saving outputs to %s", out_dir)
+        
+        ranking_path = os.path.join(out_dir, "ranking_results.csv")
+        ranking_df.to_csv(ranking_path, index=False)
+
+        comparison_path = os.path.join(out_dir, "embedding_comparison.csv")
+        comparison_df.to_csv(comparison_path, index=False)
+
+        
+        cfg_path = os.path.join(out_dir, "config.yaml")
+        with open(cfg_path, "w") as f:
+            f.write(OmegaConf.to_yaml(self.cfg))
+            
+        summary = {
+                "n_iterations": self.n_iters,
+                "n_nodes": len(nodes),
+                "walks": OmegaConf.to_container(self.cfg.walks.kinds, resolve=True),
+                }
+
+        with open(os.path.join(out_dir, "summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+
+        if self.cfg.plots:
+            self._plot_all(
+                    ranking_df=ranking_df, 
+                    out_dir=out_dir
+                    )
+        self.log.info("All results saved to %s", out_dir)
+        
+    def _post_process_ranking(self, all_results):
         
         ranking_dfs = [
                         r["ranking_df"] for r in all_results
@@ -424,6 +437,9 @@ class Pipeline:
             ignore_index=True
         )
         
+        return ranking_results_df 
+    
+    def _post_process_comparison(self, all_results): 
         comparison_rows = []
 
         for r in all_results:
@@ -439,8 +455,8 @@ class Pipeline:
 
         comparison_df = pd.DataFrame(comparison_rows)
 
-        return ranking_results_df, comparison_df
-        
+        return comparison_df
+                
     def _plot_all(self, ranking_df, out_dir):
         
         plot_metric(cfg=self.cfg, 
@@ -486,4 +502,43 @@ class Pipeline:
                         metric='precision',
                         control='distance_matched',
                         file_path=out_dir)
-        
+
+    def _save_embeddings(self, all_results):
+
+        out_dir = HydraConfig.get().runtime.output_dir
+        emb_dir = os.path.join(out_dir, "embeddings")
+        os.makedirs(emb_dir, exist_ok=True)
+
+        self.log.info("Saving embeddings to %s", emb_dir)
+
+        for res in all_results:
+            iter_num = res["iteration"]
+            
+            # Build dictionary for np.savez
+            npz_payload = {}
+
+            for emb_name, emb in res["embeddings"].items():
+                if emb is None:
+                    continue
+                npz_payload[emb_name] = emb.astype(np.float32, copy=False)
+
+            # Always store node ordering for alignment downstream
+            npz_payload["nodes"] = np.asarray(res["nodes"])
+
+            ofname = os.path.join(
+                emb_dir, f"embeddings_iter_{iter_num}.npz"
+            )
+
+            np.savez_compressed(ofname, **npz_payload)
+            
+            comparison_df = self._post_process_comparison(all_results=all_results)
+            comp_ofname = "embedding_comparison_iter"+str(iter_num)+'.csv'
+            comparison_path = os.path.join(emb_dir, comp_ofname)
+            comparison_df.to_csv(comparison_path, index=False)
+            
+
+            self.log.debug(
+                "Saved iteration %d embeddings: %s",
+                iter_num,
+                list(npz_payload.keys()),
+            )

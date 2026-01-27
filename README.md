@@ -7,7 +7,7 @@ We introduced QuVINE, a quantum-enhanced multi-view network embedding framework 
 Please cite the following article if you use QuVINE:
 
 Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine
-A. Bose, F. Utro and L. Parida (to be submitted)
+A. Bose, F. Utro and L. Parida (Under Review)
 
 
 
@@ -24,3 +24,17 @@ cd QuVINE
 pip install -e . 
 ```
 
+### Usage 
+
+QuVINE supports three kind of walks: random walk with restart (RWR), continuous-time quantum walk (CTQW), and discrete-time quantum walk (DTQW). 
+Additionally, QuVINE also fuses the embeddings generated from these walks together to create a fused embedding which is a latent subspace shared by the walk-based embeddings. 
+
+QuVINE supports disease gene prioritization in PPI networks at the moment. It also allows us to hook the embeddings for downstream prediction, classification, or unsupervised learning tasks. 
+
+QuVINE uses [Hydra](https://hydra.cc/) as input format and the code can be run using 
+
+```
+python -m quvine.main --config-path configs/ --config-name config.yaml
+```
+
+This will create a new directory inside the outputs directory and store the results. 
