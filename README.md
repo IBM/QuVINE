@@ -8,8 +8,8 @@ We introduced QuVINE, a quantum-enhanced multi-view network embedding framework 
 
 Please cite the following article if you use QuVINE:
 
-Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine
-A. Bose, F. Utro and L. Parida (Under Review)
+*Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine*, 
+A. Bose, F. Utro and L. Parida, 2026. (Under Review)
 
 
 
