@@ -41,6 +41,10 @@ python -m quvine.main --config-path configs/ --config-name config.yaml
 
 This will create a new directory inside the outputs directory and store the results. 
 
+### Notebook 
+
+To see QuVINE in action refer to the [notebook](https://github.com/IBM/QuVINE/blob/main/notebooks/quvine_embedding.ipynb). 
+
 
 <!-- MARKDOWN LINKS & IMAGES -->
 
