@@ -21,7 +21,7 @@ Please follow these steps to run and execute QuVINE.
 python -m venv myenv (or your path to the environment)
 source myenv/bin/activate
 pip install -r requirements.txt
-git clone [https://github.com/IBM/QuVINE.git](https://github.com/IBM/QuVINE.git)
+git clone https://github.com/IBM/QuVINE.git
 cd QuVINE
 pip install -e . 
 ```
