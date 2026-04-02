@@ -80,6 +80,7 @@ prometheus_client==0.24.1
 prompt_toolkit==3.0.52
 psutil==7.2.1
 ptyprocess==0.7.0
+torch>=2.0.0
 pure_eval==0.2.3
 pycparser==2.23
 Pygments==2.19.2
