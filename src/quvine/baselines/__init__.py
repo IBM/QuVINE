@@ -2,7 +2,14 @@ from quvine.baselines.node2vec import run_node2vec
 from quvine.baselines.netmf import run_netmf
 
 try:
-    from quvine.baselines.gcn_mf import GCNMF, GCNLayer, QCaliberGCNMF, normalize_adjacency, train_gcn_mf
+    from quvine.baselines.gcn_mf import (
+        GCNMF,
+        GCNLayer,
+        QCaliberGCNMF,
+        normalize_adjacency,
+        train_gcn_mf,
+        precompute_quantum_diffusion
+    )
     __all__ = [
         "run_node2vec",
         "run_netmf",
@@ -10,7 +17,8 @@ try:
         "GCNLayer",
         "QCaliberGCNMF",
         "normalize_adjacency",
-        "train_gcn_mf"
+        "train_gcn_mf",
+        "precompute_quantum_diffusion"
     ]
 except ImportError:
     # PyTorch not available

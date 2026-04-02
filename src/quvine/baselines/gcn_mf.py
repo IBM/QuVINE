@@ -59,7 +59,7 @@ class GCNLayer(nn.Module):
         support = torch.mm(x, self.weight)
         
         # Graph convolution
-        if isinstance(adj, torch.sparse.FloatTensor):
+        if getattr(adj, "is_sparse", False):
             output = torch.sparse.mm(adj, support)
         else:
             output = torch.mm(adj, support)
@@ -128,7 +128,7 @@ class GCNMF(nn.Module):
         Returns:
             Output predictions [N, output_dim]
         """
-        # GCN forward pass
+        # GCN forward pass (computes for all N nodes)
         h = x
         for i, gcn_layer in enumerate(self.gcn_layers):
             h = gcn_layer(h, adj)
@@ -136,8 +136,9 @@ class GCNMF(nn.Module):
                 h = F.relu(h)
                 h = F.dropout(h, p=self.dropout, training=self.training)
         
-        # Get matrix factorization embeddings
+        # Slice both h and MF embeddings to keep shapes consistent
         if node_indices is not None:
+            h = h[node_indices]
             mf_emb = self.node_embeddings[node_indices]
         else:
             mf_emb = self.node_embeddings
@@ -207,114 +208,141 @@ def normalize_adjacency(adj):
 
 
 
+def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_coeffs=None):
+    """
+    Precompute quantum-calibrated diffusion OFFLINE (before training).
+    
+    This function should be called ONCE before training to compute diffused features.
+    The result is then passed to QCaliberGCNMF during training.
+    
+    Args:
+        X: Original node features [N, input_dim] (numpy array or torch tensor)
+        L: Laplacian matrix (scipy sparse or numpy array)
+        diffusion_type: 'heat' or 'poly'
+        t_star: Calibrated heat kernel time parameter (for heat diffusion)
+        poly_coeffs: Calibrated polynomial coefficients (for polynomial diffusion)
+    
+    Returns:
+        X_diffused: Diffused features [N, input_dim] (torch tensor)
+    
+    Example:
+        >>> # Offline: Compute diffusion once
+        >>> X_diffused_heat = precompute_quantum_diffusion(X, L, 'heat', t_star=0.5)
+        >>> X_diffused_poly = precompute_quantum_diffusion(X, L, 'poly', poly_coeffs=coeffs)
+        >>>
+        >>> # Online: Use in training (no diffusion computation)
+        >>> model = QCaliberGCNMF(n_nodes, input_dim, hidden_dim, output_dim)
+        >>> output = model(X_diffused_heat, adj)  # Fast!
+    """
+    import scipy.sparse.linalg as spla
+    
+    # Convert to numpy if needed
+    if isinstance(X, torch.Tensor):
+        X_np = X.detach().cpu().numpy()
+    else:
+        X_np = np.array(X)
+    
+    if diffusion_type == 'heat' and t_star is not None:
+        # Heat kernel diffusion: exp(-t*L) X
+        print(f"Precomputing heat kernel diffusion (t={t_star})...")
+        Z_np = spla.expm_multiply((-t_star) * L, X_np)
+    
+    elif diffusion_type == 'poly' and poly_coeffs is not None:
+        # Polynomial filter: sum_k a_k L^k X
+        print(f"Precomputing polynomial diffusion (degree={len(poly_coeffs)-1})...")
+        Z_np = poly_coeffs[0] * X_np
+        V = X_np.copy()
+        for k in range(1, len(poly_coeffs)):
+            V = L @ V
+            Z_np += poly_coeffs[k] * V
+    else:
+        print("No diffusion applied (identity)")
+        Z_np = X_np
+    
+    print("✓ Diffusion precomputed successfully")
+    return torch.from_numpy(Z_np).float()
+
+
 class QCaliberGCNMF(GCNMF):
     """
-    Q-Caliber GCN-MF: Integrates quantum-calibrated diffusion into GCN-MF.
+    Q-Caliber GCN-MF: GCN-MF with precomputed quantum-calibrated features.
     
-    This model uses calibrated diffusion operators (from quantum walk statistics)
-    as a preprocessing step before the GCN layers, combining:
-    1. Quantum-calibrated diffusion (heat kernel or polynomial)
-    2. GCN layers for learning representations
-    3. Matrix factorization for latent features
+    DESIGN PHILOSOPHY:
+    - Diffusion is computed ONCE offline (before training)
+    - Diffused features are passed as input
+    - No CPU conversion or diffusion computation during training
+    - Scalable and efficient for large graphs
+    
+    This model expects precomputed diffused features as input, combining:
+    1. Precomputed quantum-calibrated diffusion (offline)
+    2. GCN layers for learning representations (online)
+    3. Matrix factorization for latent features (online)
     """
     
     def __init__(self, n_nodes, input_dim, hidden_dim, output_dim,
-                 mf_dim=64, n_layers=2, dropout=0.5,
-                 diffusion_type='heat', t_star=None, poly_coeffs=None, L=None):
+                 mf_dim=64, n_layers=2, dropout=0.5):
         """
         Initialize Q-Caliber GCN-MF model.
         
         Args:
             n_nodes: Number of nodes
-            input_dim: Input feature dimension
+            input_dim: Input feature dimension (should match diffused features)
             hidden_dim: Hidden layer dimension
             output_dim: Output dimension
             mf_dim: Matrix factorization dimension
             n_layers: Number of GCN layers
             dropout: Dropout rate
-            diffusion_type: 'heat' or 'poly'
-            t_star: Calibrated heat kernel time parameter
-            poly_coeffs: Calibrated polynomial coefficients
-            L: Laplacian matrix (for diffusion)
+        
+        Note:
+            This model expects precomputed diffused features as input.
+            Compute diffusion offline using:
+                X_diffused = apply_quantum_diffusion(X, L, t_star, poly_coeffs)
+            Then pass X_diffused to forward().
         """
         super().__init__(n_nodes, input_dim, hidden_dim, output_dim,
                         mf_dim, n_layers, dropout)
-        
-        self.diffusion_type = diffusion_type
-        self.t_star = t_star
-        self.poly_coeffs = poly_coeffs
-        self.L = L
-    
-    def apply_calibrated_diffusion(self, x):
-        """
-        Apply quantum-calibrated diffusion to input features.
-        
-        Args:
-            x: Input features [N, input_dim]
-        
-        Returns:
-            Diffused features [N, input_dim]
-        """
-        if self.L is None:
-            return x
-        
-        import scipy.sparse.linalg as spla
-        
-        x_np = x.detach().cpu().numpy()
-        z_np = np.zeros_like(x_np)
-        
-        if self.diffusion_type == 'heat' and self.t_star is not None:
-            # Heat kernel diffusion: exp(-t*L) X
-            for f in range(x_np.shape[1]):
-                z_np[:, f] = spla.expm_multiply((-self.t_star) * self.L, x_np[:, f])
-        
-        elif self.diffusion_type == 'poly' and self.poly_coeffs is not None:
-            # Polynomial filter: sum_k a_k L^k X
-            for f in range(x_np.shape[1]):
-                v = x_np[:, f]
-                z_np[:, f] = self.poly_coeffs[0] * v
-                for k in range(1, len(self.poly_coeffs)):
-                    v = self.L @ v
-                    z_np[:, f] += self.poly_coeffs[k] * v
-        else:
-            z_np = x_np
-        
-        return torch.from_numpy(z_np).float().to(x.device)
     
     def forward(self, x, adj, node_indices=None):
         """
-        Forward pass with quantum-calibrated diffusion preprocessing.
+        Forward pass with precomputed diffused features.
         
         Args:
-            x: Node features [N, input_dim]
+            x: PRECOMPUTED diffused features [N, input_dim]
+               (computed offline before training)
             adj: Normalized adjacency matrix [N, N]
             node_indices: Optional node indices
         
         Returns:
             Output predictions [N, output_dim]
-        """
-        # Apply quantum-calibrated diffusion first
-        x_diffused = self.apply_calibrated_diffusion(x)
         
-        # Then apply standard GCN-MF forward pass
-        return super().forward(x_diffused, adj, node_indices)
+        Note:
+            x should be the result of offline diffusion:
+            x = exp(-t*L) @ X_original  (heat kernel)
+            or
+            x = polynomial_filter(L, coeffs) @ X_original  (polynomial)
+        """
+        # Simply use the precomputed diffused features
+        # No diffusion computation here - it's done offline!
+        return super().forward(x, adj, node_indices)
     
     def get_embeddings(self, x, adj):
         """
-        Get node embeddings with calibrated diffusion preprocessing.
+        Get node embeddings from precomputed diffused features.
         
         Args:
-            x: Node features
+            x: PRECOMPUTED diffused features [N, input_dim]
+               (computed offline before training)
             adj: Normalized adjacency matrix
         
         Returns:
             Node embeddings
-        """
-        # Apply quantum-calibrated diffusion first
-        x_diffused = self.apply_calibrated_diffusion(x)
         
-        # Then get embeddings
-        return super().get_embeddings(x_diffused, adj)
+        Note:
+            x should already be diffused features from offline computation.
+            No diffusion is applied here - it's done offline!
+        """
+        # x is already precomputed diffused features
+        return super().get_embeddings(x, adj)
 
 
 
