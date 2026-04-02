@@ -30,10 +30,10 @@ __all__ = [
     "evaluate_node_classification",
     "evaluate_all_label_strategies",
     "summarize_classification_results",
-    # Link Prediction
-    "sample_negative_edges",
+    # Link Prediction (Enhanced with hard negatives and inner product/cosine)
+    "sample_negative_edges",  # Now supports 'random', 'hard_2hop', 'same_community'
     "split_edges",
-    "compute_edge_features",
+    "compute_edge_features",  # Now supports 'inner_product' and 'cosine'
     "evaluate_link_prediction",
     "evaluate_link_prediction_cv",
     "evaluate_all_edge_feature_methods",

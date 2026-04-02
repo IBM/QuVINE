@@ -277,10 +277,6 @@ def evaluate_node_classification(
             'error': 'insufficient_samples'
         }
     
-    # Standardize features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
     # Initialize classifier
     if classifier == 'logistic':
         clf = LogisticRegression(max_iter=1000, random_state=random_state, multi_class='ovr')
@@ -291,11 +287,16 @@ def evaluate_node_classification(
     
     # Single train-test split evaluation
     X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=test_size, random_state=random_state, stratify=y
+        X, y, test_size=test_size, random_state=random_state, stratify=y
     )
     
-    clf.fit(X_train, y_train)
-    y_pred = clf.predict(X_test)
+    # FIX: Prevent data leakage - fit scaler only on training data
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)  # Use transform, not fit_transform
+    
+    clf.fit(X_train_scaled, y_train)
+    y_pred = clf.predict(X_test_scaled)
     
     # Compute metrics
     results = {
@@ -319,13 +320,15 @@ def evaluate_node_classification(
         cv_scores = []
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         
-        for train_idx, test_idx in skf.split(X_scaled, y):
-            X_train_cv, X_test_cv = X_scaled[train_idx], X_scaled[test_idx]
+        for train_idx, test_idx in skf.split(X, y):
+            X_train_cv, X_test_cv = X[train_idx], X[test_idx]
+            X_train_cv_scaled = scaler.transform(X_train_cv)
+            X_test_cv_scaled = scaler.transform(X_test_cv)
             y_train_cv, y_test_cv = y[train_idx], y[test_idx]
             
             clf_cv = LogisticRegression(max_iter=1000, random_state=random_state, multi_class='ovr')
-            clf_cv.fit(X_train_cv, y_train_cv)
-            y_pred_cv = clf_cv.predict(X_test_cv)
+            clf_cv.fit(X_train_cv_scaled, y_train_cv)
+            y_pred_cv = clf_cv.predict(X_test_cv_scaled)
             
             cv_scores.append(f1_score(y_test_cv, y_pred_cv, average='macro', zero_division=0))
         
