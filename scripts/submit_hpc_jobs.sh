@@ -265,7 +265,14 @@ if [ "$DRY_RUN" = false ] && [ ${#SUBMITTED_JOBS[@]} -gt 0 ]; then
 fi
 
 echo ""
-echo "Results will be saved to: $OUTPUT_DIR"
+echo "Results will be saved to: $OUTPUT_DIR/results"
+echo ""
+echo "After all jobs complete, aggregate results with:"
+echo "  python scripts/collect_hpc_results.py --results-dir $OUTPUT_DIR/results"
+echo ""
+echo "This will create: $OUTPUT_DIR/results/comprehensive_results.csv"
+echo "  - One row per network × method combination"
+echo "  - Columns: complexity metrics + all task performance metrics"
+echo "  - Ready for correlation analysis and visualization"
 echo "=================================="
 
-# Made with Bob

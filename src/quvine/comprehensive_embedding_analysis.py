@@ -1229,6 +1229,357 @@ class ComprehensiveEmbeddingAnalysis:
             'merged': merged_df
         }
 
+def run_single_network_analysis(
+    G: nx.Graph,
+    network_id: str,
+    network_metadata: Dict,
+    output_dir: str,
+    embedding_methods: List[str] = None,
+    embedding_dim: int = 128,
+    num_seeds: int = 15,
+    num_targets: int = 25,
+    verbose: bool = True
+) -> Dict:
+    """
+    Run complete analysis for a single network (for HPC parallelization).
+    
+    This function:
+    1. Computes complexity metrics
+    2. Generates embeddings for all specified methods
+    3. Evaluates all downstream tasks (ranking, classification, link prediction)
+    4. Saves all results to network-specific subdirectory
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input network
+    network_id : str
+        Unique identifier for the network
+    network_metadata : dict
+        Metadata about the network (type, parameters, etc.)
+    output_dir : str
+        Output directory for this network's results
+    embedding_methods : list of str, optional
+        Methods to run. Default: ['quvine_fused', 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'netmf', 'node2vec']
+    embedding_dim : int
+        Embedding dimension
+    num_seeds : int
+        Number of seed nodes
+    num_targets : int
+        Number of target nodes
+    verbose : bool
+        Print progress messages
+        
+    Returns
+    -------
+    dict
+        Summary of results with paths to saved files
+    """
+    import os
+    from pathlib import Path
+    
+    if embedding_methods is None:
+        embedding_methods = ['quvine_fused', 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'netmf', 'node2vec']
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    if verbose:
+        logger.info(f"="*80)
+        logger.info(f"Processing network: {network_id}")
+        logger.info(f"Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}")
+        logger.info(f"Output directory: {output_dir}")
+        logger.info(f"="*80)
+    
+    # Initialize temporary analysis object
+    temp_analysis = ComprehensiveEmbeddingAnalysis(
+        output_dir=output_dir,
+        n_networks_per_type=1,
+        n_nodes=G.number_of_nodes(),
+        num_seeds=num_seeds,
+        num_targets=num_targets,
+        embedding_dim=embedding_dim,
+        seed=42,
+        n_jobs=1  # Single network, no parallelization needed
+    )
+    
+    # Select seeds and targets
+    seeds, targets = temp_analysis._select_seeds_targets(G)
+    
+    # Step 1: Compute complexity metrics
+    if verbose:
+        logger.info("Step 1/4: Computing complexity metrics...")
+    
+    complexity_metrics = compute_graph_complexity_metrics(G)
+    complexity_metrics['network_id'] = network_id
+    complexity_metrics['network_type'] = network_metadata.get('type', 'unknown')
+    complexity_metrics['n_nodes'] = G.number_of_nodes()
+    complexity_metrics['n_edges'] = G.number_of_edges()
+    
+    # Save complexity metrics
+    complexity_df = pd.DataFrame([complexity_metrics])
+    complexity_path = output_path / f"{network_id}_complexity.csv"
+    complexity_df.to_csv(complexity_path, index=False)
+    
+    if verbose:
+        logger.info(f"  ✓ Complexity metrics saved to {complexity_path}")
+    
+    # Step 2: Generate embeddings and evaluate all tasks
+    all_results = {
+        'ranking': [],
+        'classification': [],
+        'link_prediction': []
+    }
+    
+    for method in embedding_methods:
+        if verbose:
+            logger.info(f"Step 2/4: Processing method: {method}")
+        
+        try:
+            # Generate embedding
+            embedding = temp_analysis.run_embedding_method(method, G, seeds, targets)
+            
+            # Save embedding
+            embedding_path = output_path / f"{network_id}_{method}_embedding.npy"
+            np.save(embedding_path, embedding)
+            
+            # Task 1: Ranking (node prioritization)
+            if verbose:
+                logger.info(f"  - Evaluating ranking task...")
+            ranking_result = temp_analysis.evaluate_embedding(
+                embedding, G, seeds, targets, method, network_id
+            )
+            all_results['ranking'].append(ranking_result)
+            
+            # Task 2: Node classification
+            if verbose:
+                logger.info(f"  - Evaluating classification task...")
+            classification_result = temp_analysis.evaluate_embedding_classification(
+                embedding, G, method, network_id
+            )
+            all_results['classification'].append(classification_result)
+            
+            # Task 3: Link prediction
+            if verbose:
+                logger.info(f"  - Evaluating link prediction task...")
+            link_pred_result = temp_analysis.evaluate_embedding_link_prediction(
+                embedding, G, method, network_id
+            )
+            all_results['link_prediction'].append(link_pred_result)
+            
+            if verbose:
+                logger.info(f"  ✓ {method} completed successfully")
+                
+        except Exception as e:
+            logger.error(f"  ✗ {method} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Step 3: Save all task results
+    if verbose:
+        logger.info("Step 3/4: Saving task results...")
+    
+    # Save ranking results
+    if all_results['ranking']:
+        ranking_df = pd.DataFrame(all_results['ranking'])
+        ranking_path = output_path / f"{network_id}_ranking_results.csv"
+        ranking_df.to_csv(ranking_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ Ranking results saved to {ranking_path}")
+    
+    # Save classification results
+    if all_results['classification']:
+        classification_df = pd.DataFrame(all_results['classification'])
+        classification_path = output_path / f"{network_id}_classification_results.csv"
+        classification_df.to_csv(classification_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ Classification results saved to {classification_path}")
+    
+    # Save link prediction results
+    if all_results['link_prediction']:
+        link_pred_df = pd.DataFrame(all_results['link_prediction'])
+        link_pred_path = output_path / f"{network_id}_link_prediction_results.csv"
+        link_pred_df.to_csv(link_pred_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ Link prediction results saved to {link_pred_path}")
+    
+    # Step 4: Create summary
+    if verbose:
+        logger.info("Step 4/4: Creating summary...")
+    
+    summary = {
+        'network_id': network_id,
+        'network_type': network_metadata.get('type', 'unknown'),
+        'n_nodes': G.number_of_nodes(),
+        'n_edges': G.number_of_edges(),
+        'methods_completed': len(all_results['ranking']),
+        'methods_requested': len(embedding_methods),
+        'output_dir': str(output_path),
+        'complexity_file': str(complexity_path),
+        'ranking_file': str(ranking_path) if all_results['ranking'] else None,
+        'classification_file': str(classification_path) if all_results['classification'] else None,
+        'link_prediction_file': str(link_pred_path) if all_results['link_prediction'] else None
+    }
+    
+    # Save summary
+    summary_path = output_path / f"{network_id}_summary.json"
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    if verbose:
+        logger.info(f"="*80)
+        logger.info(f"✓ Analysis complete for {network_id}")
+        logger.info(f"  Methods completed: {summary['methods_completed']}/{summary['methods_requested']}")
+        logger.info(f"  Results saved to: {output_dir}")
+        logger.info(f"="*80)
+    
+    return summary
+
+
+def collect_and_aggregate_results(
+    results_dir: str,
+    output_file: str = "comprehensive_results.csv",
+    verbose: bool = True
+) -> pd.DataFrame:
+    """
+    Collect and aggregate results from all network analyses into a single CSV.
+    
+    This function:
+    1. Scans the results directory for all network subdirectories
+    2. Loads complexity metrics and task results for each network
+    3. Merges all data into a single comprehensive DataFrame
+    4. Each row = one network × one method combination
+    5. Columns = complexity metrics + all task performance metrics
+    
+    Parameters
+    ----------
+    results_dir : str
+        Directory containing network subdirectories with results
+    output_file : str
+        Name of output CSV file (saved in results_dir)
+    verbose : bool
+        Print progress messages
+        
+    Returns
+    -------
+    pd.DataFrame
+        Comprehensive results with all networks, methods, complexity, and performance metrics
+    """
+    from pathlib import Path
+    import glob
+    
+    results_path = Path(results_dir)
+    
+    if verbose:
+        logger.info("="*80)
+        logger.info("COLLECTING AND AGGREGATING RESULTS")
+        logger.info(f"Results directory: {results_dir}")
+        logger.info("="*80)
+    
+    # Find all network subdirectories
+    network_dirs = [d for d in results_path.iterdir() if d.is_dir()]
+    
+    if verbose:
+        logger.info(f"Found {len(network_dirs)} network directories")
+    
+    all_data = []
+    
+    for network_dir in network_dirs:
+        network_id = network_dir.name
+        
+        if verbose:
+            logger.info(f"Processing: {network_id}")
+        
+        try:
+            # Load complexity metrics
+            complexity_files = list(network_dir.glob("*_complexity.csv"))
+            if not complexity_files:
+                logger.warning(f"  No complexity file found for {network_id}")
+                continue
+            
+            complexity_df = pd.read_csv(complexity_files[0])
+            complexity_dict = complexity_df.iloc[0].to_dict()
+            
+            # Load ranking results
+            ranking_files = list(network_dir.glob("*_ranking_results.csv"))
+            ranking_df = pd.read_csv(ranking_files[0]) if ranking_files else pd.DataFrame()
+            
+            # Load classification results
+            classification_files = list(network_dir.glob("*_classification_results.csv"))
+            classification_df = pd.read_csv(classification_files[0]) if classification_files else pd.DataFrame()
+            
+            # Load link prediction results
+            link_pred_files = list(network_dir.glob("*_link_prediction_results.csv"))
+            link_pred_df = pd.read_csv(link_pred_files[0]) if link_pred_files else pd.DataFrame()
+            
+            # Get unique methods
+            methods = set()
+            if not ranking_df.empty:
+                methods.update(ranking_df['method'].unique())
+            if not classification_df.empty:
+                methods.update(classification_df['method'].unique())
+            if not link_pred_df.empty:
+                methods.update(link_pred_df['method'].unique())
+            
+            # Create one row per method
+            for method in methods:
+                row_data = complexity_dict.copy()
+                row_data['method'] = method
+                
+                # Add ranking metrics
+                if not ranking_df.empty:
+                    method_ranking = ranking_df[ranking_df['method'] == method]
+                    if not method_ranking.empty:
+                        for col in method_ranking.columns:
+                            if col not in ['network_id', 'method', 'network_type']:
+                                row_data[f'ranking_{col}'] = method_ranking.iloc[0][col]
+                
+                # Add classification metrics
+                if not classification_df.empty:
+                    method_classification = classification_df[classification_df['method'] == method]
+                    if not method_classification.empty:
+                        for col in method_classification.columns:
+                            if col not in ['network_id', 'method', 'network_type']:
+                                row_data[f'classification_{col}'] = method_classification.iloc[0][col]
+                
+                # Add link prediction metrics
+                if not link_pred_df.empty:
+                    method_link_pred = link_pred_df[link_pred_df['method'] == method]
+                    if not method_link_pred.empty:
+                        for col in method_link_pred.columns:
+                            if col not in ['network_id', 'method', 'network_type']:
+                                row_data[f'link_prediction_{col}'] = method_link_pred.iloc[0][col]
+                
+                all_data.append(row_data)
+            
+            if verbose:
+                logger.info(f"  ✓ Loaded {len(methods)} methods")
+                
+        except Exception as e:
+            logger.error(f"  ✗ Failed to process {network_id}: {e}")
+            continue
+    
+    # Create comprehensive DataFrame
+    comprehensive_df = pd.DataFrame(all_data)
+    
+    # Save to CSV
+    output_path = results_path / output_file
+    comprehensive_df.to_csv(output_path, index=False)
+    
+    if verbose:
+        logger.info("="*80)
+        logger.info("AGGREGATION COMPLETE")
+        logger.info(f"Total rows: {len(comprehensive_df)}")
+        logger.info(f"Total columns: {len(comprehensive_df.columns)}")
+        logger.info(f"Networks: {comprehensive_df['network_id'].nunique()}")
+        logger.info(f"Methods: {comprehensive_df['method'].nunique()}")
+        logger.info(f"Saved to: {output_path}")
+        logger.info("="*80)
+    
+    return comprehensive_df
+
+
 
 def main():
     """Main entry point."""
