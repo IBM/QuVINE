@@ -616,3 +616,347 @@ def get_graph_statistics(G: nx.Graph) -> Dict:
         stats['transitivity'] = nx.transitivity(G)
     
     return stats
+
+
+
+def generate_comprehensive_dataset(
+    n_instances: int = 30,
+    base_seed: int = 42,
+    n_nodes: int = 200,
+    save_dir: Optional[str] = None
+) -> Dict[str, List[Tuple[nx.Graph, Dict]]]:
+    """
+    Generate a comprehensive dataset of random graphs for embedding analysis.
+    
+    This function generates multiple instances of each graph type with varying
+    random seeds to capture natural parameter variations.
+    
+    Graph types included:
+    - Erdős-Rényi (random)
+    - Barabási-Albert (scale-free)
+    - Watts-Strogatz (small-world)
+    - Powerlaw Cluster (scale-free with clustering)
+    - Stochastic Block Model (modular/community structure)
+    - Random Geometric (spatial networks)
+    - Hierarchical (tree-like structure)
+    - Core-Periphery (hub-spoke structure)
+    - Bipartite Random (two-mode networks)
+    
+    Parameters
+    ----------
+    n_instances : int, default=30
+        Number of instances to generate for each graph type
+    base_seed : int, default=42
+        Base random seed (each instance uses base_seed + instance_id)
+    n_nodes : int, default=200
+        Target number of nodes for each graph
+    save_dir : str, optional
+        If provided, save graphs to this directory
+        
+    Returns
+    -------
+    dict
+        Dictionary mapping graph type names to lists of (graph, metadata) tuples
+        
+    Examples
+    --------
+    >>> dataset = generate_comprehensive_dataset(n_instances=30, n_nodes=200)
+    >>> print(f"Generated {sum(len(v) for v in dataset.values())} graphs")
+    >>> print(f"Graph types: {list(dataset.keys())}")
+    """
+    import os
+    from pathlib import Path
+    
+    dataset = {}
+    
+    # 1. Erdős-Rényi (Random)
+    print(f"Generating {n_instances} Erdős-Rényi graphs...")
+    dataset['erdos_renyi'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        p = 0.05 + (i / n_instances) * 0.10  # Vary density from 0.05 to 0.15
+        G = generate_erdos_renyi(n_nodes, p=p, seed=seed)
+        metadata = {
+            'type': 'erdos_renyi',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'p': p,
+            'params': {'n': n_nodes, 'p': p}
+        }
+        dataset['erdos_renyi'].append((G, metadata))
+    
+    # 2. Barabási-Albert (Scale-Free)
+    print(f"Generating {n_instances} Barabási-Albert graphs...")
+    dataset['barabasi_albert'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        m = 2 + (i % 5)  # Vary m from 2 to 6
+        G = generate_barabasi_albert(n_nodes, m=m, seed=seed)
+        metadata = {
+            'type': 'barabasi_albert',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'm': m,
+            'params': {'n': n_nodes, 'm': m}
+        }
+        dataset['barabasi_albert'].append((G, metadata))
+    
+    # 3. Watts-Strogatz (Small-World)
+    print(f"Generating {n_instances} Watts-Strogatz graphs...")
+    dataset['watts_strogatz'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        k = 4 + (i % 6) * 2  # Vary k from 4 to 14
+        p = 0.1 + (i / n_instances) * 0.4  # Vary rewiring prob from 0.1 to 0.5
+        G = generate_watts_strogatz(n_nodes, k=k, p=p, seed=seed)
+        metadata = {
+            'type': 'watts_strogatz',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'k': k,
+            'p': p,
+            'params': {'n': n_nodes, 'k': k, 'p': p}
+        }
+        dataset['watts_strogatz'].append((G, metadata))
+    
+    # 4. Powerlaw Cluster (Scale-Free with Clustering)
+    print(f"Generating {n_instances} Powerlaw Cluster graphs...")
+    dataset['powerlaw_cluster'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        m = 2 + (i % 4)  # Vary m from 2 to 5
+        p = 0.1 + (i / n_instances) * 0.3  # Vary triangle prob from 0.1 to 0.4
+        G = generate_powerlaw_cluster(n_nodes, m=m, p=p, seed=seed)
+        metadata = {
+            'type': 'powerlaw_cluster',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'm': m,
+            'p': p,
+            'params': {'n': n_nodes, 'm': m, 'p': p}
+        }
+        dataset['powerlaw_cluster'].append((G, metadata))
+    
+    # 5. Stochastic Block Model (Modular)
+    print(f"Generating {n_instances} Stochastic Block Model graphs...")
+    dataset['stochastic_block_model'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        n_communities = 3 + (i % 5)  # Vary communities from 3 to 7
+        p_in = 0.3 + (i / n_instances) * 0.3  # Vary intra-community from 0.3 to 0.6
+        p_out = 0.01 + (i / n_instances) * 0.04  # Vary inter-community from 0.01 to 0.05
+        
+        # Create block sizes
+        block_sizes = [n_nodes // n_communities] * n_communities
+        # Adjust last block to account for rounding
+        block_sizes[-1] += n_nodes - sum(block_sizes)
+        
+        # Create probability matrix
+        p_matrix = [[p_out] * n_communities for _ in range(n_communities)]
+        for j in range(n_communities):
+            p_matrix[j][j] = p_in
+        
+        G = generate_stochastic_block_model(block_sizes, p_matrix, seed=seed)
+        metadata = {
+            'type': 'stochastic_block_model',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'n_communities': n_communities,
+            'p_in': p_in,
+            'p_out': p_out,
+            'params': {'block_sizes': block_sizes, 'p_in': p_in, 'p_out': p_out}
+        }
+        dataset['stochastic_block_model'].append((G, metadata))
+    
+    # 6. Random Geometric (Spatial)
+    print(f"Generating {n_instances} Random Geometric graphs...")
+    dataset['random_geometric'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        radius = 0.1 + (i / n_instances) * 0.15  # Vary radius from 0.1 to 0.25
+        dim = 2  # 2D space
+        G = generate_random_geometric(n_nodes, radius=radius, dim=dim, seed=seed)
+        metadata = {
+            'type': 'random_geometric',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'radius': radius,
+            'dim': dim,
+            'params': {'n': n_nodes, 'radius': radius, 'dim': dim}
+        }
+        dataset['random_geometric'].append((G, metadata))
+    
+    # 7. Hierarchical
+    print(f"Generating {n_instances} Hierarchical graphs...")
+    dataset['hierarchical'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        branching_factor = 2 + (i % 3)  # Vary branching from 2 to 4
+        levels = 4 + (i % 3)  # Vary levels from 4 to 6
+        p_level = 0.01 + (i / n_instances) * 0.09  # Vary cross-level from 0.01 to 0.1
+        G, node_levels = generate_hierarchical_network(
+            levels=levels,
+            branching_factor=branching_factor,
+            p_level=p_level,
+            seed=seed
+        )
+        metadata = {
+            'type': 'hierarchical',
+            'instance': i,
+            'seed': seed,
+            'branching_factor': branching_factor,
+            'levels': levels,
+            'p_level': p_level,
+            'params': {'branching_factor': branching_factor, 'levels': levels, 'p_level': p_level}
+        }
+        dataset['hierarchical'].append((G, metadata))
+    
+    # 8. Core-Periphery
+    print(f"Generating {n_instances} Core-Periphery graphs...")
+    dataset['core_periphery'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        core_size = int(n_nodes * (0.1 + (i / n_instances) * 0.2))  # Core 10-30% of nodes
+        p_core = 0.5 + (i / n_instances) * 0.3  # Vary core density from 0.5 to 0.8
+        p_periphery = 0.01 + (i / n_instances) * 0.04  # Vary periphery from 0.01 to 0.05
+        p_core_periphery = 0.1 + (i / n_instances) * 0.2  # Vary connection from 0.1 to 0.3
+        
+        G = generate_core_periphery(
+            n_core=core_size,
+            n_periphery=n_nodes - core_size,
+            p_core=p_core,
+            p_periphery=p_periphery,
+            p_core_periphery=p_core_periphery,
+            seed=seed
+        )
+        metadata = {
+            'type': 'core_periphery',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'core_size': core_size,
+            'p_core': p_core,
+            'p_periphery': p_periphery,
+            'p_core_periphery': p_core_periphery,
+            'params': {
+                'n_core': core_size,
+                'n_periphery': n_nodes - core_size,
+                'p_core': p_core,
+                'p_periphery': p_periphery,
+                'p_core_periphery': p_core_periphery
+            }
+        }
+        dataset['core_periphery'].append((G, metadata))
+    
+    # 9. Bipartite Random
+    print(f"Generating {n_instances} Bipartite Random graphs...")
+    dataset['bipartite_random'] = []
+    for i in range(n_instances):
+        seed = base_seed + i
+        n1 = n_nodes // 2 + (i % 20) - 10  # Vary split around 50/50
+        n2 = n_nodes - n1
+        p = 0.05 + (i / n_instances) * 0.15  # Vary edge probability from 0.05 to 0.2
+        
+        G = generate_bipartite_random(n1=n1, n2=n2, p=p, seed=seed)
+        metadata = {
+            'type': 'bipartite_random',
+            'instance': i,
+            'seed': seed,
+            'n_nodes': n_nodes,
+            'n1': n1,
+            'n2': n2,
+            'p': p,
+            'params': {'n1': n1, 'n2': n2, 'p': p}
+        }
+        dataset['bipartite_random'].append((G, metadata))
+    
+    # Save graphs if directory provided
+    if save_dir:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        print(f"\nSaving graphs to {save_dir}...")
+        for graph_type, graphs in dataset.items():
+            type_dir = save_dir / graph_type
+            type_dir.mkdir(exist_ok=True)
+            
+            for i, (G, metadata) in enumerate(graphs):
+                # Save graph
+                graph_file = type_dir / f"{graph_type}_{i:03d}.graphml"
+                nx.write_graphml(G, graph_file)
+                
+                # Save metadata
+                metadata_file = type_dir / f"{graph_type}_{i:03d}_metadata.json"
+                import json
+                with open(metadata_file, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+    
+    # Print summary
+    print("\n" + "="*60)
+    print("Dataset Generation Summary")
+    print("="*60)
+    total_graphs = 0
+    for graph_type, graphs in dataset.items():
+        print(f"{graph_type:25s}: {len(graphs):3d} graphs")
+        total_graphs += len(graphs)
+    print("-"*60)
+    print(f"{'Total':25s}: {total_graphs:3d} graphs")
+    print("="*60)
+    
+    return dataset
+
+
+def load_comprehensive_dataset(load_dir: str) -> Dict[str, List[Tuple[nx.Graph, Dict]]]:
+    """
+    Load a previously saved comprehensive dataset.
+    
+    Parameters
+    ----------
+    load_dir : str
+        Directory containing saved graphs
+        
+    Returns
+    -------
+    dict
+        Dictionary mapping graph type names to lists of (graph, metadata) tuples
+    """
+    import json
+    from pathlib import Path
+    
+    load_dir = Path(load_dir)
+    dataset = {}
+    
+    # Find all graph type directories
+    for type_dir in sorted(load_dir.iterdir()):
+        if not type_dir.is_dir():
+            continue
+        
+        graph_type = type_dir.name
+        dataset[graph_type] = []
+        
+        # Load all graphs in this directory
+        graph_files = sorted(type_dir.glob("*.graphml"))
+        for graph_file in graph_files:
+            # Load graph
+            G = nx.read_graphml(graph_file)
+            
+            # Load metadata
+            metadata_file = graph_file.with_suffix('').with_suffix('.json').with_name(
+                graph_file.stem + '_metadata.json'
+            )
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {'type': graph_type}
+            
+            dataset[graph_type].append((G, metadata))
+    
+    print(f"Loaded {sum(len(v) for v in dataset.values())} graphs from {load_dir}")
+    return dataset

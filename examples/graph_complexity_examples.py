@@ -20,7 +20,7 @@ from quvine.data.random_graphs import (
     generate_hierarchical_network,
     generate_core_periphery,
 )
-from quvine.data.graph_complexity import (
+from quvine.complexity.graph import (
     compute_laplacian_spectrum,
     compute_spectral_gap,
     compute_algebraic_connectivity,
@@ -333,7 +333,7 @@ def example_centrality_complexity():
     print("Example 9: Laplacian Centrality Complexity")
     print("="*60)
     
-    from quvine.data.graph_complexity import compute_laplacian_centrality_complexity
+    from quvine.complexity.graph import compute_laplacian_centrality_complexity
     
     n = 100
     seed = 42
@@ -368,7 +368,7 @@ def example_fiedler_sparse():
     print("Example 10: Sparse Fiedler Eigenvalue Computation")
     print("="*60)
     
-    from quvine.data.graph_complexity import fiedler_eigenvalue_sparse
+    from quvine.complexity.graph import fiedler_eigenvalue_sparse
     import time
     
     print("\nComputing Fiedler eigenvalue for graphs of different sizes:")

@@ -39,7 +39,7 @@ from quvine.data.random_graphs import (
     generate_modular_network,
     get_graph_statistics
 )
-from quvine.data.graph_complexity import compute_graph_complexity_metrics
+from quvine.complexity.graph import compute_graph_complexity_metrics
 from quvine.baselines import run_netmf, run_node2vec
 from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.corpus.builder import CorpusBuilder

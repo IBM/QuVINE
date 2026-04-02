@@ -15,11 +15,11 @@ import networkx as nx
 from omegaconf import DictConfig, OmegaConf
 
 from quvine.pipeline import Pipeline
-from quvine.data.graph_complexity import (
+from quvine.complexity.graph import (
     compute_graph_complexity_metrics,
     compute_laplacian_spectrum,
 )
-from quvine.data.qbc_complexity import (
+from quvine.complexity.qbc import (
     compute_qbc_complexity_from_laplacian,
     check_qbc_available,
 )

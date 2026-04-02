@@ -22,7 +22,8 @@ from .random_graphs import (
     generate_graph_with_seeds_and_targets,
     get_graph_statistics,
 )
-from .graph_complexity import (
+# Import from new complexity module location
+from quvine.complexity.graph import (
     compute_laplacian_spectrum,
     compute_spectral_gap,
     compute_algebraic_connectivity,
@@ -36,7 +37,7 @@ from .graph_complexity import (
     compare_graph_complexities,
     rank_graphs_by_complexity,
 )
-from .qbc_complexity import (
+from quvine.complexity.qbc import (
     compute_qbc_complexity_from_laplacian,
     compute_qbc_complexity_multimethod,
     compute_comprehensive_complexity,
