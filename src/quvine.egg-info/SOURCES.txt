@@ -15,6 +15,7 @@ src/quvine/analysis/__init__.py
 src/quvine/analysis/analyze.py
 src/quvine/analysis/compare.py
 src/quvine/baselines/__init__.py
+src/quvine/baselines/netmf.py
 src/quvine/baselines/node2vec.py
 src/quvine/corpus/builder.py
 src/quvine/corpus/operations.py
