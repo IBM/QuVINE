@@ -1,53 +1,169 @@
-## QuVINE: Quantum-enabled View-Integrated Network Embeddings
+# QuVINE: Quantum-enabled View-Integrated Network Embeddings
 
-[![QuVINE Framewor][quvine]](#)
+[![QuVINE Framework][quvine]](#)
 
 We introduced QuVINE, a quantum-enhanced multi-view network embedding framework designed to address the inherent complexity and heterogeneity of biological data in precision medicine. By moving beyond the limitations of classical, single-view random walks, QuVINE leverages quantum-inspired dynamics to capture higher-order topological features and long-range dependencies that are frequently lost in standard diffusion-based models.
 
-### Citation
+## 🚀 Quick Start
 
-Please cite the following article if you use QuVINE:
+```bash
+# 1. Create virtual environment
+python -m venv venv_quvine
+source venv_quvine/bin/activate  # On Windows: venv_quvine\Scripts\activate
 
-*Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine*, 
-A. Bose, F. Utro and L. Parida, 2026. (Under Review)
-
-
-
-### Installation
-
-Please follow these steps to run and execute QuVINE. 
-
-```
-python -m venv myenv (or your path to the environment)
-source myenv/bin/activate
+# 2. Install dependencies
 pip install -r requirements.txt
-git clone https://github.com/IBM/QuVINE.git
-cd QuVINE
-pip install -e . 
-```
 
-### Usage 
+# 3. Install QuVINE
+pip install -e .
 
-QuVINE supports three kind of walks: random walk with restart (RWR), continuous-time quantum walk (CTQW), and discrete-time quantum walk (DTQW). 
-Additionally, QuVINE also fuses the embeddings generated from these walks together to create a fused embedding which is a latent subspace shared by the walk-based embeddings. 
-
-QuVINE supports disease gene prioritization in PPI networks at the moment. It also allows us to hook the embeddings for downstream prediction, classification, or unsupervised learning tasks. 
-
-QuVINE uses [Hydra](https://hydra.cc/) as input format and the code can be run using 
-
-```
+# 4. Run QuVINE
 python -m quvine.main --config-path configs/ --config-name config.yaml
 ```
 
-This will create a new directory inside the outputs directory and store the results. 
+For detailed installation instructions, see [docs/setup/SETUP_INSTRUCTIONS.md](docs/setup/SETUP_INSTRUCTIONS.md).
 
-### Notebook 
+## 📚 Documentation
 
-To see QuVINE in action refer to the [notebook](https://github.com/IBM/QuVINE/blob/main/notebooks/quvine_embedding.ipynb). 
+Comprehensive documentation is available in the [docs/](docs/) directory:
 
+### 🚀 [Setup & Installation](docs/setup/)
+- **[SETUP_INSTRUCTIONS.md](docs/setup/SETUP_INSTRUCTIONS.md)** - Complete installation guide
+- **[QBIOCODE_INSTALL.md](docs/setup/QBIOCODE_INSTALL.md)** - QBioCode integration
+
+### 📖 [User Guides](docs/guides/)
+- **[QUICK_START.md](docs/guides/QUICK_START.md)** - Get started quickly
+- **[COMPREHENSIVE_ANALYSIS_GUIDE.md](docs/guides/COMPREHENSIVE_ANALYSIS_GUIDE.md)** - Full analysis pipeline
+- **[COMPREHENSIVE_DATASET_GUIDE.md](docs/guides/COMPREHENSIVE_DATASET_GUIDE.md)** - Dataset generation
+- **[PARALLELIZATION_GUIDE.md](docs/guides/PARALLELIZATION_GUIDE.md)** - HPC and parallel execution
+- **[QUANTUM_ADVANTAGE_AND_DOWNSTREAM_TASKS.md](docs/guides/QUANTUM_ADVANTAGE_AND_DOWNSTREAM_TASKS.md)** - Quantum advantage analysis
+
+### 🛠️ [Development](docs/development/)
+- **[CONTRIBUTING.md](docs/development/CONTRIBUTING.md)** - Contribution guidelines
+- **[IMPLEMENTATION_SUMMARY.md](docs/development/IMPLEMENTATION_SUMMARY.md)** - Technical details
+- **[IMPROVEMENTS_AND_FIXES.md](docs/development/IMPROVEMENTS_AND_FIXES.md)** - Recent updates
+
+### 📊 [API Reference](docs/)
+- **[graph_complexity_guide.md](docs/graph_complexity_guide.md)** - Complexity metrics
+- **[random_graphs_guide.md](docs/random_graphs_guide.md)** - Random graph generation
+
+## ✨ Key Features
+
+### Embedding Methods
+- **Quantum Walks**: CTQW (Continuous-Time), DTQW (Discrete-Time)
+- **Classical Walks**: RWR (Random Walk with Restart)
+- **Fusion**: Multi-view embedding integration
+- **Baselines**: NetMF, Node2Vec
+
+### Complexity Metrics (35+)
+- **Spectral**: Eigenvalue-based measures
+- **Topological**: Ollivier-Ricci Curvature, Kirchhoff Index, Betti Numbers
+- **Quantum**: Quantum advantage formulas (arithmetic, geometric, harmonic)
+- **Structural**: Clustering, modularity, assortativity
+
+### Downstream Tasks
+- **Node Prioritization**: Disease gene ranking
+- **Node Classification**: 6+ label generation strategies
+- **Link Prediction**: 7 edge feature methods, 3 negative sampling strategies
+
+### Evaluation Features
+- **Hard Negative Sampling**: 2-hop, same-community
+- **Inner Product & Cosine Similarity**: Quantum fidelity-based features
+- **Data Leakage Prevention**: Proper train/test separation
+- **Comprehensive Metrics**: AUC-ROC, AUC-PR, Precision@K, Recall@K, F1, MRR
+
+## 📊 Usage Examples
+
+### Basic Usage
+```python
+from quvine.main import main
+
+# Run with default config
+main()
+```
+
+### Generate Random Networks
+```python
+from quvine.data.random_graphs import generate_random_graph
+
+# Generate scale-free network
+G = generate_random_graph(
+    graph_type='scale_free',
+    n_nodes=500,
+    params={'m': 3}
+)
+```
+
+### Compute Complexity Metrics
+```python
+from quvine.data.graph_complexity import compute_graph_complexity_metrics
+
+# Compute all metrics
+metrics = compute_graph_complexity_metrics(G)
+print(f"Spectral gap: {metrics['spectral_gap']}")
+print(f"ORC mean: {metrics['orc_mean']}")
+```
+
+### Run Comprehensive Analysis
+```python
+from quvine.comprehensive_embedding_analysis import run_comprehensive_analysis
+
+# Analyze embeddings across multiple tasks
+results = run_comprehensive_analysis(
+    graph=G,
+    embedding_methods=['quvine_fused', 'netmf', 'node2vec'],
+    tasks=['ranking', 'classification', 'link_prediction']
+)
+```
+
+## 📓 Notebooks
+
+Interactive examples are available in [notebooks/](notebooks/):
+- **[quvine_embedding.ipynb](notebooks/quvine_embedding.ipynb)** - Basic QuVINE usage
+- **[complexity_and_embedding_demo.ipynb](notebooks/complexity_and_embedding_demo.ipynb)** - Complexity analysis
+- **[embedding_methods_comparison.ipynb](notebooks/embedding_methods_comparison.ipynb)** - Method comparison
+
+## 🔬 Research Workflow
+
+```
+1. Generate Networks → 2. Compute Complexity → 3. Generate Embeddings
+         ↓                       ↓                        ↓
+4. Evaluate Tasks → 5. Analyze Correlations → 6. Generate Recommendations
+```
+
+See [docs/guides/COMPREHENSIVE_ANALYSIS_GUIDE.md](docs/guides/COMPREHENSIVE_ANALYSIS_GUIDE.md) for details.
+
+## 📝 Citation
+
+Please cite the following article if you use QuVINE:
+
+*Quantum-enhanced Network Embeddings via Multi-view Integration for Precision Medicine*,
+A. Bose, F. Utro and L. Parida, 2026. (Under Review)
+
+## 🤝 Contributing
+
+We welcome contributions! Please read [docs/development/CONTRIBUTING.md](docs/development/CONTRIBUTING.md) for guidelines.
+
+## 📄 License
+
+See [LICENSE](LICENSE) for details.
+
+## 🆕 Recent Updates (April 2026)
+
+- ✅ **Fixed critical data leakage bugs** in classification and link prediction
+- ✅ **Added hard negative sampling** (2-hop, same-community)
+- ✅ **Added inner product & cosine similarity** edge features
+- ✅ **13 new topological complexity metrics**
+- ✅ **3 quantum advantage formulas** for empirical comparison
+- ✅ **Multi-task evaluation pipeline** (ranking, classification, link prediction)
+- ✅ **Organized documentation** into structured folders
+
+See [docs/development/IMPROVEMENTS_AND_FIXES.md](docs/development/IMPROVEMENTS_AND_FIXES.md) for details.
+
+---
+
+**Version**: 2.0 (Multi-task evaluation with bug fixes)
+**Last Updated**: April 2, 2026
 
 <!-- MARKDOWN LINKS & IMAGES -->
-
-<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-
 [quvine]: images/quvine_framework.png
