@@ -341,8 +341,15 @@ if [ "$DRY_RUN" = false ] && [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
     echo ""
     echo "Submitting aggregation and visualization job..."
     
-    # Create dependency string
-    DEPENDENCY_STRING=$(IFS=" && " ; echo "done(${ANALYSIS_JOB_IDS[*]})")
+    # Create dependency string (proper LSF syntax)
+    DEPENDENCY_STRING=""
+    for job_id in "${ANALYSIS_JOB_IDS[@]}"; do
+        if [ -z "$DEPENDENCY_STRING" ]; then
+            DEPENDENCY_STRING="done($job_id)"
+        else
+            DEPENDENCY_STRING="$DEPENDENCY_STRING && done($job_id)"
+        fi
+    done
     
     agg_job_name="quvine_aggregate"
     agg_log_file="$OUTPUT_DIR/logs/${agg_job_name}.out"
