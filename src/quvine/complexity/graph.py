@@ -642,6 +642,15 @@ def compute_graph_complexity_metrics(G: nx.Graph) -> Dict[str, float]:
             'centrality_range': 0.0,
             'num_nodes': 0,
             'num_edges': 0,
+            # Topological metrics
+            'orc_gJC_mean': 0.0,
+            'orc_kLB_mean': 0.0,
+            'orc_negative_fraction': 0.0,
+            'cyclomatic_number': 0,
+            'kirchhoff_index': 0.0,
+            'betti_0': 0,
+            'betti_1': 0,
+            'betti_2': 0,
         }
 
     metrics = {
@@ -680,6 +689,29 @@ def compute_graph_complexity_metrics(G: nx.Graph) -> Dict[str, float]:
     # Add quantum advantage metrics
     qa_metrics = compute_quantum_advantage_metrics(G)
     metrics.update(qa_metrics)
+    
+    # Add topological/geometric complexity metrics
+    # Note: Betti numbers can be expensive for large graphs, so make it optional
+    try:
+        topo_metrics = compute_topological_metrics(
+            G,
+            include_betti=G.number_of_nodes() < 500,  # Only for smaller graphs
+            include_persistence_entropy=G.number_of_nodes() < 500,
+            maxdim=2,
+            filtration_scale=1.0
+        )
+        metrics.update(topo_metrics)
+    except Exception as e:
+        # If topological metrics fail (e.g., ripser not installed), continue
+        import warnings
+        warnings.warn(f"Topological metrics computation failed: {e}")
+        # Add placeholder values
+        metrics.update({
+            'orc_gJC_mean': 0.0, 'orc_kLB_mean': 0.0,
+            'cyclomatic_number': 0,
+            'kirchhoff_index': 0.0,
+            'betti_0': 0, 'betti_1': 0, 'betti_2': 0,
+        })
 
     return metrics
 
@@ -735,6 +767,9 @@ def compute_quantum_advantage_metrics(G: nx.Graph) -> Dict[str, float]:
             'clustering_std': 0.0,
             'degree_heterogeneity': 0.0,
             'quantum_advantage_score': 0.0,
+            'quantum_advantage_arithmetic': 0.0,
+            'quantum_advantage_geometric': 0.0,
+            'quantum_advantage_harmonic': 0.0,
         }
 
     metrics = {}
@@ -784,22 +819,40 @@ def compute_quantum_advantage_metrics(G: nx.Graph) -> Dict[str, float]:
         np.std(degrees) / mean_deg if mean_deg > 0 else 0.0
     )
 
-    # 6. Quantum advantage score (composite)
+    # 6. Quantum advantage scores (multiple formulations)
     qc = compute_quantum_complexity(G)
     sg = compute_spectral_gap(G, normalized=True)
     ipr = compute_inverse_participation_ratio(G, normalized=True)
 
+    # Normalized components (all in [0, 1])
     modularity_norm = metrics['modularity']                    # in [0, 1]
     spectral_gap_norm = 1.0 - min(sg, 1.0)                    # low gap → high advantage
     ipr_norm = min(ipr, 1.0)                                   # more localised → more advantage
     clustering_norm = metrics['clustering_mean']               # in [0, 1]
-
-    metrics['quantum_advantage_score'] = float(
-        0.30 * modularity_norm +
-        0.25 * spectral_gap_norm +
-        0.25 * ipr_norm +
-        0.20 * clustering_norm
-    )
+    
+    # Add small epsilon to avoid log(0) and division by zero
+    eps = 1e-10
+    components = np.array([
+        modularity_norm + eps,
+        spectral_gap_norm + eps,
+        ipr_norm + eps,
+        clustering_norm + eps
+    ])
+    weights = np.array([0.30, 0.25, 0.25, 0.20])
+    
+    # Arithmetic mean (current default - additive contributions)
+    qa_arithmetic = float(np.sum(weights * components))
+    
+    # Geometric mean (synergistic interactions - all features must be present)
+    qa_geometric = float(np.prod(components ** weights))
+    
+    # Harmonic mean (emphasizes minimum - bottleneck-sensitive)
+    qa_harmonic = float(1.0 / np.sum(weights / components))
+    
+    metrics['quantum_advantage_score'] = qa_arithmetic  # Keep as default
+    metrics['quantum_advantage_arithmetic'] = qa_arithmetic
+    metrics['quantum_advantage_geometric'] = qa_geometric
+    metrics['quantum_advantage_harmonic'] = qa_harmonic
 
     return metrics
 
@@ -829,3 +882,521 @@ def rank_graphs_by_complexity(
         for name, metrics in complexities.items()
     ]
     return sorted(rankings, key=lambda x: x[1], reverse=True)
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Topological & Geometric Complexity Metrics
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _hop_distance_matrix(G: nx.Graph) -> np.ndarray:
+    """
+    Compute all-pairs shortest-path distance matrix using hop counts (unweighted).
+    
+    Disconnected pairs receive distance = max_finite + 1.
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+        
+    Returns
+    -------
+    np.ndarray
+        Distance matrix with shape (n, n)
+    """
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import shortest_path as _scipy_shortest_path
+    
+    n = G.number_of_nodes()
+    if n == 0:
+        return np.zeros((0, 0))
+    
+    # Build unweighted adjacency matrix
+    A_bool = (nx.to_numpy_array(G, weight=None) > 0).astype(np.float64)
+    D = _scipy_shortest_path(csr_matrix(A_bool), directed=False)
+    
+    # Replace inf with sentinel value
+    finite_vals = D[np.isfinite(D)]
+    sentinel = (finite_vals.max() + 1.0) if len(finite_vals) > 0 else 1.0
+    D[~np.isfinite(D)] = sentinel
+    
+    return D
+
+
+def _laplacian_nonzero_eigenvalues(G: nx.Graph, tol: float = 1e-10) -> np.ndarray:
+    """
+    Compute sorted positive eigenvalues of the combinatorial Laplacian.
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    tol : float
+        Threshold for filtering near-zero eigenvalues
+        
+    Returns
+    -------
+    np.ndarray
+        Sorted positive eigenvalues
+    """
+    from scipy import linalg
+    
+    L = nx.laplacian_matrix(G).toarray()
+    eigs = np.sort(linalg.eigvalsh(L))
+    return eigs[eigs > tol]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Ollivier-Ricci Curvature (ORC)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_orc_per_edge(G: nx.Graph) -> Dict[Tuple, Dict[str, float]]:
+    """
+    Compute Ollivier-Ricci curvature approximations for every edge.
+    
+    Two approximations are computed:
+    
+    1. **Generalized Jaccard (gJC)**: Fast O(d) proxy
+       gJC(u, v) = |N(u) ∩ N(v)| / |N(u) ∪ N(v)|
+       
+    2. **Jost-Liu lower bound (κ_LB)**: Tighter spectral bound
+       κ_LB(u, v) = Δ / max(dᵤ, d_v) + 1/dᵤ + 1/d_v − 1
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+        
+    Returns
+    -------
+    dict
+        Mapping (u, v) → {'gJC': float, 'kappa_LB': float, 'triangles': int}
+    """
+    result = {}
+    
+    for u, v in G.edges():
+        du = G.degree(u)
+        dv = G.degree(v)
+        
+        # Common neighbours (excluding u and v)
+        Nu = set(G.neighbors(u))
+        Nv = set(G.neighbors(v))
+        common = (Nu & Nv) - {u, v}
+        Delta = len(common)
+        
+        # Generalized Jaccard
+        union_size = du + dv - Delta
+        gJC = Delta / union_size if union_size > 0 else 0.0
+        
+        # Jost-Liu lower bound
+        if du == 0 or dv == 0:
+            kappa_LB = -1.0
+        else:
+            kappa_LB = Delta / max(du, dv) + 1.0 / du + 1.0 / dv - 1.0
+        
+        result[(u, v)] = {
+            "gJC": float(gJC),
+            "kappa_LB": float(kappa_LB),
+            "triangles": Delta,
+        }
+    
+    return result
+
+
+def compute_orc_stats(G: nx.Graph) -> Dict[str, float]:
+    """
+    Aggregate ORC statistics over all edges.
+    
+    Returns mean, min, max, std for both gJC and κ_LB, plus the fraction
+    of edges with negative κ_LB (bottleneck indicator).
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+        
+    Returns
+    -------
+    dict
+        ORC statistics with keys:
+        - orc_gJC_mean, orc_gJC_min, orc_gJC_max, orc_gJC_std
+        - orc_kLB_mean, orc_kLB_min, orc_kLB_max, orc_kLB_std
+        - orc_negative_fraction (fraction of edges with κ_LB < 0)
+        - orc_num_edges
+    """
+    if G.number_of_edges() == 0:
+        return {
+            "orc_gJC_mean": 0.0, "orc_gJC_min": 0.0, "orc_gJC_max": 0.0, "orc_gJC_std": 0.0,
+            "orc_kLB_mean": 0.0, "orc_kLB_min": 0.0, "orc_kLB_max": 0.0, "orc_kLB_std": 0.0,
+            "orc_negative_fraction": 0.0,
+            "orc_num_edges": 0.0,
+        }
+    
+    per_edge = compute_orc_per_edge(G)
+    gJC_vals = np.array([v["gJC"] for v in per_edge.values()])
+    kLB_vals = np.array([v["kappa_LB"] for v in per_edge.values()])
+    
+    return {
+        "orc_gJC_mean": float(gJC_vals.mean()),
+        "orc_gJC_min": float(gJC_vals.min()),
+        "orc_gJC_max": float(gJC_vals.max()),
+        "orc_gJC_std": float(gJC_vals.std()),
+        "orc_kLB_mean": float(kLB_vals.mean()),
+        "orc_kLB_min": float(kLB_vals.min()),
+        "orc_kLB_max": float(kLB_vals.max()),
+        "orc_kLB_std": float(kLB_vals.std()),
+        "orc_negative_fraction": float(np.mean(kLB_vals < 0)),
+        "orc_num_edges": float(G.number_of_edges()),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Cyclomatic Number (Circuit Rank)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_cyclomatic_number(G: nx.Graph) -> int:
+    """
+    Compute cyclomatic number (circuit rank / first Betti number of 1-skeleton).
+    
+    μ(G) = m − n + c
+    
+    where m = |E|, n = |V|, c = number of connected components.
+    
+    Interpretation:
+    - μ = 0 iff G is a forest (no cycles)
+    - μ counts minimum edges to remove to make G acyclic
+    - Dimension of cycle space H₁(G; ℤ₂)
+    - For quantum walks: counts interference-generating loops
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+        
+    Returns
+    -------
+    int
+        Non-negative cyclomatic number
+    """
+    m = G.number_of_edges()
+    n = G.number_of_nodes()
+    c = nx.number_connected_components(G)
+    return max(0, m - n + c)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Kirchhoff Index (Total Effective Resistance)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_kirchhoff_index(G: nx.Graph, tol: float = 1e-10) -> float:
+    """
+    Compute Kirchhoff index (total effective resistance).
+    
+    R_K = n · Σᵢ 1/λᵢ
+    
+    summing over all positive eigenvalues λᵢ of the Laplacian.
+    
+    Interpretation:
+    - For disconnected graphs: R_K = ∞
+    - Classical random-walk mixing time ∝ R_K
+    - Large R_K indicates bottlenecked topology → potential quantum speedup
+    - Complete graph K_n: R_K = n−1
+    - Path graph P_n: R_K = n(n²−1)/6
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    tol : float
+        Eigenvalue threshold for filtering zero mode
+        
+    Returns
+    -------
+    float
+        Kirchhoff index, or np.inf for disconnected graphs
+    """
+    if G.number_of_nodes() == 0:
+        return 0.0
+    
+    if not nx.is_connected(G):
+        return float("inf")
+    
+    n = G.number_of_nodes()
+    eigs_pos = _laplacian_nonzero_eigenvalues(G, tol=tol)
+    
+    if len(eigs_pos) == 0:
+        return float("inf")
+    
+    return float(n * np.sum(1.0 / eigs_pos))
+
+
+def compute_kirchhoff_stats(G: nx.Graph, tol: float = 1e-10) -> Dict[str, float]:
+    """
+    Compute Kirchhoff index and normalized variants.
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    tol : float
+        Eigenvalue threshold
+        
+    Returns
+    -------
+    dict
+        - kirchhoff_index: Raw R_K
+        - kirchhoff_per_pair: R_K / C(n, 2) (mean effective resistance)
+        - kirchhoff_normalised: R_K / R_K(P_n) (fraction of path-graph value)
+    """
+    n = G.number_of_nodes()
+    Rk = compute_kirchhoff_index(G, tol=tol)
+    
+    num_pairs = n * (n - 1) / 2 if n > 1 else 1.0
+    Rk_path = n * (n ** 2 - 1) / 6.0 if n > 1 else 1.0
+    
+    return {
+        "kirchhoff_index": Rk,
+        "kirchhoff_per_pair": Rk / num_pairs if np.isfinite(Rk) else float("inf"),
+        "kirchhoff_normalised": Rk / Rk_path if np.isfinite(Rk) else float("inf"),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Persistent Betti Numbers via Ripser
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_betti_numbers(
+    G: nx.Graph,
+    maxdim: int = 2,
+    filtration_scale: float = 1.0,
+) -> Dict[str, object]:
+    """
+    Compute persistent Betti numbers β₀, β₁, β₂ using Ripser.
+    
+    Uses hop-count shortest-path distance matrix for Vietoris-Rips filtration.
+    
+    At filtration scale ε = 1 (one hop = one edge):
+    - β₀ = number of connected components
+    - β₁ = number of independent cycles in clique complex
+    - β₂ = voids (unfilled tetrahedra) in clique complex
+    
+    Relationship to cyclomatic number μ:
+    - μ counts all cycles in 1-skeleton (graph edges only)
+    - β₁ counts cycles not filled by triangles
+    - β₁ ≤ μ (triangles reduce cycle count)
+    - β₁ = μ iff G is triangle-free
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    maxdim : int, default=2
+        Maximum homological dimension
+    filtration_scale : float, default=1.0
+        ε at which Betti numbers are evaluated
+        
+    Returns
+    -------
+    dict
+        - betti_0, betti_1, betti_2: Betti numbers at filtration_scale
+        - persistence_diagrams: list of numpy arrays
+        - betti_sum: β₀ + β₁ + β₂
+        - euler_characteristic: β₀ − β₁ + β₂
+    """
+    try:
+        from ripser import ripser as _ripser
+    except ImportError:
+        import warnings
+        warnings.warn("ripser not installed. Install with: pip install ripser")
+        return {
+            "betti_0": 0, "betti_1": 0, "betti_2": 0,
+            "persistence_diagrams": [],
+            "betti_sum": 0, "euler_characteristic": 0,
+        }
+    
+    n = G.number_of_nodes()
+    if n == 0:
+        return {
+            "betti_0": 0, "betti_1": 0, "betti_2": 0,
+            "persistence_diagrams": [],
+            "betti_sum": 0, "euler_characteristic": 0,
+        }
+    
+    if n == 1:
+        return {
+            "betti_0": 1, "betti_1": 0, "betti_2": 0,
+            "persistence_diagrams": [np.array([[0.0, np.inf]])],
+            "betti_sum": 1, "euler_characteristic": 1,
+        }
+    
+    # Build hop-count distance matrix
+    D = _hop_distance_matrix(G)
+    
+    # Run Ripser
+    result = _ripser(D, maxdim=maxdim, distance_matrix=True)
+    dgms = result["dgms"]
+    
+    # Count features alive at filtration_scale ε
+    eps = filtration_scale
+    betti = []
+    for dim, dgm in enumerate(dgms):
+        if len(dgm) == 0:
+            betti.append(0)
+            continue
+        births = dgm[:, 0]
+        deaths = dgm[:, 1]
+        alive = int(np.sum((births <= eps) & (deaths > eps)))
+        betti.append(alive)
+    
+    # Pad to 3 dimensions
+    while len(betti) < 3:
+        betti.append(0)
+    
+    b0, b1, b2 = betti[0], betti[1], betti[2]
+    
+    return {
+        "betti_0": b0,
+        "betti_1": b1,
+        "betti_2": b2,
+        "persistence_diagrams": dgms,
+        "betti_sum": b0 + b1 + b2,
+        "euler_characteristic": b0 - b1 + b2,
+    }
+
+
+def compute_persistence_entropy(
+    G: nx.Graph,
+    maxdim: int = 2,
+    filtration_scale: float = 1.0,
+) -> Dict[str, float]:
+    """
+    Compute persistence entropy for each homological dimension.
+    
+    For persistence diagram D_k = {(bᵢ, dᵢ)}, persistence entropy is:
+    
+    H_k = −Σᵢ (lᵢ / L) · log(lᵢ / L)
+    
+    where lᵢ = dᵢ − bᵢ is persistence lifetime and L = Σᵢ lᵢ.
+    
+    Measures complexity of multi-scale topological structure:
+    - High H_k: many cycles with diverse lifetimes
+    - Low H_k: one dominant topological feature
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    maxdim : int, default=2
+        Maximum dimension
+    filtration_scale : float
+        Unused (entropy computed over all features)
+        
+    Returns
+    -------
+    dict
+        persistence_entropy_H0, persistence_entropy_H1, persistence_entropy_H2
+    """
+    betti_result = compute_betti_numbers(G, maxdim=maxdim, filtration_scale=filtration_scale)
+    dgms = betti_result["persistence_diagrams"]
+    
+    entropies = {}
+    for dim in range(3):
+        key = f"persistence_entropy_H{dim}"
+        if dim >= len(dgms) or len(dgms[dim]) == 0:
+            entropies[key] = 0.0
+            continue
+        
+        dgm = dgms[dim]
+        births = dgm[:, 0]
+        deaths = dgm[:, 1].copy()
+        
+        # Replace inf with max-finite + 1
+        finite_mask = np.isfinite(deaths)
+        if finite_mask.any():
+            max_finite = deaths[finite_mask].max()
+        else:
+            max_finite = 0.0
+        deaths[~finite_mask] = max_finite + 1.0
+        
+        lifetimes = deaths - births
+        lifetimes = lifetimes[lifetimes > 0]
+        
+        if len(lifetimes) == 0:
+            entropies[key] = 0.0
+            continue
+        
+        L = lifetimes.sum()
+        probs = lifetimes / L
+        entropies[key] = float(-np.sum(probs * np.log(probs + 1e-300)))
+    
+    return entropies
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Combined Topological Metrics Interface
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_topological_metrics(
+    G: nx.Graph,
+    include_betti: bool = True,
+    include_persistence_entropy: bool = True,
+    maxdim: int = 2,
+    filtration_scale: float = 1.0,
+) -> Dict[str, object]:
+    """
+    Compute all topological/geometric complexity metrics.
+    
+    Metrics computed:
+    - ORC (Ollivier-Ricci curvature): gJC and κ_LB approximations
+    - Cyclomatic number: Circuit rank μ
+    - Kirchhoff index: Total effective resistance R_K
+    - Betti numbers: β₀, β₁, β₂ (if include_betti=True)
+    - Persistence entropy: H₀, H₁, H₂ (if include_persistence_entropy=True)
+    
+    Parameters
+    ----------
+    G : nx.Graph
+        Input graph
+    include_betti : bool, default=True
+        Compute Betti numbers (expensive for large graphs)
+    include_persistence_entropy : bool, default=True
+        Compute persistence entropy (requires include_betti=True)
+    maxdim : int, default=2
+        Maximum homological dimension
+    filtration_scale : float, default=1.0
+        ε at which Betti numbers are evaluated
+        
+    Returns
+    -------
+    dict
+        All topological metrics
+    """
+    metrics = {}
+    
+    # Basic properties
+    metrics["num_nodes"] = G.number_of_nodes()
+    metrics["num_edges"] = G.number_of_edges()
+    
+    # ORC stats
+    metrics.update(compute_orc_stats(G))
+    
+    # Cyclomatic number
+    metrics["cyclomatic_number"] = compute_cyclomatic_number(G)
+    
+    # Kirchhoff index
+    metrics.update(compute_kirchhoff_stats(G))
+    
+    # Betti numbers + persistence entropy
+    if include_betti and G.number_of_nodes() > 0:
+        betti = compute_betti_numbers(G, maxdim=maxdim, filtration_scale=filtration_scale)
+        # Don't store raw diagrams in flat dict
+        betti.pop("persistence_diagrams", None)
+        metrics.update(betti)
+        
+        if include_persistence_entropy:
+            metrics.update(
+                compute_persistence_entropy(G, maxdim=maxdim, filtration_scale=filtration_scale)
+            )
+    
+    return metrics
