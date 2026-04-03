@@ -5,7 +5,7 @@ try:
     from quvine.baselines.gcn_mf import (
         GCNMF,
         GCNLayer,
-        QCaliberGCNMF,
+        QuVINEGCNMF,
         normalize_adjacency,
         train_gcn_mf,
         precompute_quantum_diffusion
@@ -15,7 +15,7 @@ try:
         "run_netmf",
         "GCNMF",
         "GCNLayer",
-        "QCaliberGCNMF",
+        "QuVINEGCNMF",
         "normalize_adjacency",
         "train_gcn_mf",
         "precompute_quantum_diffusion"

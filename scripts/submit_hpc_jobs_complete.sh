@@ -18,6 +18,11 @@
 #   --queue QUEUE        LSF queue name (default: normal)
 #   --walltime TIME      Wall time for analysis jobs (default: 4:00)
 #   --memory MEM         Memory per job in GB (default: 16)
+#   --methods METHODS    Comma-separated list of methods (default: all)
+#                        Available: quvine_fused, quvine_ctqw, quvine_dtqw, quvine_rwr,
+#                                   quvine_heat, quvine_poly, quvine_hgcnmf, quvine_pgcnmf,
+#                                   netmf, node2vec
+#                        Use 'all' for all methods, 'quantum' for QuVINE only, 'classical' for baselines
 #   --dry-run            Print commands without submitting
 #
 # Author: QuVINE Team
@@ -33,8 +38,14 @@ OUTPUT_DIR="outputs/hpc_results"
 QUEUE="normal"
 WALLTIME="4:00"
 MEMORY="16"
+METHODS="all"
 DRY_RUN=false
 PYTHON_ENV="venv_quvine/bin/python"
+
+# All available methods
+ALL_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec"
+QUANTUM_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf"
+CLASSICAL_METHODS="netmf,node2vec"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -63,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             MEMORY="$2"
             shift 2
             ;;
+        --methods)
+            METHODS="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
@@ -73,11 +88,27 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--n-networks NUM] [--n-nodes NUM] [--output-dir DIR] [--queue QUEUE] [--walltime TIME] [--memory MEM] [--dry-run]"
+            echo "Usage: $0 [--n-networks NUM] [--n-nodes NUM] [--output-dir DIR] [--queue QUEUE] [--walltime TIME] [--memory MEM] [--methods METHODS] [--dry-run]"
             exit 1
             ;;
     esac
 done
+
+# Process methods parameter
+case "$METHODS" in
+    all)
+        SELECTED_METHODS="$ALL_METHODS"
+        ;;
+    quantum)
+        SELECTED_METHODS="$QUANTUM_METHODS"
+        ;;
+    classical)
+        SELECTED_METHODS="$CLASSICAL_METHODS"
+        ;;
+    *)
+        SELECTED_METHODS="$METHODS"
+        ;;
+esac
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -99,6 +130,7 @@ echo "LSF Queue:         $QUEUE"
 echo "Wall Time:         $WALLTIME"
 echo "Memory per Job:    ${MEMORY}GB"
 echo "Python Env:        $PYTHON_ENV"
+echo "Methods:           $SELECTED_METHODS"
 echo "Dry Run:           $DRY_RUN"
 echo "=================================="
 echo ""
@@ -185,7 +217,7 @@ results = run_single_network_analysis(
     network_id='${network_id}',
     network_metadata=metadata,
     output_dir='${job_output_dir}',
-    embedding_methods=['quvine_fused', 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'netmf', 'node2vec'],
+    embedding_methods='${SELECTED_METHODS}'.split(','),
     verbose=True
 )
 
@@ -304,7 +336,7 @@ results = run_single_network_analysis(
     network_id='${network_id}',
     network_metadata=metadata,
     output_dir='${job_output_dir}',
-    embedding_methods=['quvine_fused', 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'netmf', 'node2vec'],
+    embedding_methods='${SELECTED_METHODS}'.split(','),
     verbose=True
 )
 

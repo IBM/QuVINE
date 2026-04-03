@@ -213,7 +213,7 @@ def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_
     Precompute quantum-calibrated diffusion OFFLINE (before training).
     
     This function should be called ONCE before training to compute diffused features.
-    The result is then passed to QCaliberGCNMF during training.
+    The result is then passed to QuVINEGCNMF during training.
     
     Args:
         X: Original node features [N, input_dim] (numpy array or torch tensor)
@@ -231,7 +231,7 @@ def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_
         >>> X_diffused_poly = precompute_quantum_diffusion(X, L, 'poly', poly_coeffs=coeffs)
         >>>
         >>> # Online: Use in training (no diffusion computation)
-        >>> model = QCaliberGCNMF(n_nodes, input_dim, hidden_dim, output_dim)
+        >>> model = QuVINEGCNMF(n_nodes, input_dim, hidden_dim, output_dim)
         >>> output = model(X_diffused_heat, adj)  # Fast!
     """
     import scipy.sparse.linalg as spla
@@ -263,9 +263,9 @@ def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_
     return torch.from_numpy(Z_np).float()
 
 
-class QCaliberGCNMF(GCNMF):
+class QuVINEGCNMF(GCNMF):
     """
-    Q-Caliber GCN-MF: GCN-MF with precomputed quantum-calibrated features.
+    QuVINE GCN-MF: GCN-MF with precomputed quantum-calibrated features.
     
     DESIGN PHILOSOPHY:
     - Diffusion is computed ONCE offline (before training)
@@ -282,7 +282,7 @@ class QCaliberGCNMF(GCNMF):
     def __init__(self, n_nodes, input_dim, hidden_dim, output_dim,
                  mf_dim=64, n_layers=2, dropout=0.5):
         """
-        Initialize Q-Caliber GCN-MF model.
+        Initialize QuVINE GCN-MF model.
         
         Args:
             n_nodes: Number of nodes
@@ -424,14 +424,14 @@ def train_gcn_mf(model, x, y, adj, train_mask, val_mask,
     return history
 
 
-def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
-                                      diffusion_type='heat', t_star=None,
-                                      poly_coeffs=None, K=4, ridge=1e-6,
-                                      hidden_dim=64, mf_dim=64, n_layers=2,
-                                      epochs=200, lr=0.01, weight_decay=5e-4,
-                                      normalize_laplacian=True, random_state=42):
+def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
+                                    diffusion_type='heat', t_star=None,
+                                    poly_coeffs=None, K=4, ridge=1e-6,
+                                    hidden_dim=64, mf_dim=64, n_layers=2,
+                                    epochs=200, lr=0.01, weight_decay=5e-4,
+                                    normalize_laplacian=True, random_state=42):
     """
-    Generate Q-Caliber GCN-MF embeddings (Heat or Poly variant).
+    Generate QuVINE GCN-MF embeddings (Heat or Poly variant).
     
     WORKFLOW:
     1. Calibrate diffusion parameters using quantum walks (if not provided)
@@ -440,7 +440,7 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
     4. Extract final embeddings
     
     This is a HIGH-LEVEL wrapper that combines:
-    - Q-Caliber filter calibration (from qcaliber_filters.py)
+    - QuVINE quantum filter calibration (from quantum_filters.py)
     - Offline diffusion precomputation
     - GCN-MF training
     - Embedding extraction
@@ -469,15 +469,15 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
         metadata: Dictionary with calibration info and training history
     
     Example:
-        >>> from quvine.baselines.gcn_mf import generate_qcaliber_gcnmf_embedding
+        >>> from quvine.baselines.gcn_mf import generate_quvine_gcnmf_embedding
         >>>
-        >>> # Generate Q-Caliber GCN-MF (Heat) embeddings
-        >>> embeddings_heat, meta_heat = generate_qcaliber_gcnmf_embedding(
+        >>> # Generate QuVINE GCN-MF (Heat) embeddings
+        >>> embeddings_heat, meta_heat = generate_quvine_gcnmf_embedding(
         ...     G, q_targets, embedding_dim=128, diffusion_type='heat'
         ... )
         >>>
-        >>> # Generate Q-Caliber GCN-MF (Poly) embeddings
-        >>> embeddings_poly, meta_poly = generate_qcaliber_gcnmf_embedding(
+        >>> # Generate QuVINE GCN-MF (Poly) embeddings
+        >>> embeddings_poly, meta_poly = generate_quvine_gcnmf_embedding(
         ...     G, q_targets, embedding_dim=128, diffusion_type='poly', K=4
         ... )
     """
@@ -497,7 +497,7 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
     import logging
     
     logger = logging.getLogger(__name__)
-    logger.info(f"Generating Q-Caliber GCN-MF embeddings ({diffusion_type} diffusion)...")
+    logger.info(f"Generating QuVINE GCN-MF embeddings ({diffusion_type} diffusion)...")
     
     # Set random seed
     np.random.seed(random_state)
@@ -583,10 +583,10 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
     adj_torch = torch.sparse_coo_tensor(indices, values, shape)
     
     # STEP 3: Train Q-Caliber GCN-MF model
-    logger.info("Training Q-Caliber GCN-MF model...")
+    logger.info("Training QuVINE GCN-MF model...")
     
     # Create model
-    model = QCaliberGCNMF(
+    model = QuVINEGCNMF(
         n_nodes=N,
         input_dim=embedding_dim,
         hidden_dim=hidden_dim,
@@ -637,7 +637,7 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
         final_embeddings = model.get_embeddings(X_diffused_torch, adj_torch)
         final_embeddings = final_embeddings.cpu().numpy()
     
-    logger.info(f"✓ Q-Caliber GCN-MF embeddings generated: shape {final_embeddings.shape}")
+    logger.info(f"✓ QuVINE GCN-MF embeddings generated: shape {final_embeddings.shape}")
     
     metadata['final_embedding_shape'] = final_embeddings.shape
     
@@ -647,7 +647,7 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
 def generate_qcaliber_gcnmf_heat_embedding(G, q_targets, embedding_dim=128,
                                            t_star=None, **kwargs):
     """
-    Generate Q-Caliber GCN-MF (Heat) embeddings.
+    Generate QuVINE Heat+GCN-MF (HGCNMF) embeddings.
     
     Convenience wrapper for heat kernel variant.
     
@@ -662,7 +662,7 @@ def generate_qcaliber_gcnmf_heat_embedding(G, q_targets, embedding_dim=128,
         embeddings: Node embeddings [N, embedding_dim]
         metadata: Calibration and training info
     """
-    return generate_qcaliber_gcnmf_embedding(
+    return generate_quvine_gcnmf_embedding(
         G, q_targets, embedding_dim=embedding_dim,
         diffusion_type='heat', t_star=t_star, **kwargs
     )
@@ -671,7 +671,7 @@ def generate_qcaliber_gcnmf_heat_embedding(G, q_targets, embedding_dim=128,
 def generate_qcaliber_gcnmf_poly_embedding(G, q_targets, embedding_dim=128,
                                            poly_coeffs=None, K=4, ridge=1e-6, **kwargs):
     """
-    Generate Q-Caliber GCN-MF (Poly) embeddings.
+    Generate QuVINE Polynomial+GCN-MF (PGCNMF) embeddings.
     
     Convenience wrapper for polynomial filter variant.
     
@@ -688,7 +688,7 @@ def generate_qcaliber_gcnmf_poly_embedding(G, q_targets, embedding_dim=128,
         embeddings: Node embeddings [N, embedding_dim]
         metadata: Calibration and training info
     """
-    return generate_qcaliber_gcnmf_embedding(
+    return generate_quvine_gcnmf_embedding(
         G, q_targets, embedding_dim=embedding_dim,
         diffusion_type='poly', poly_coeffs=poly_coeffs, K=K, ridge=ridge, **kwargs
     )
