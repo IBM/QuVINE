@@ -590,6 +590,8 @@ class ComprehensiveEmbeddingAnalysis:
             results[f'precision@{k}_max'] = precision_max
             results[f'recall@{k}_max'] = recall_max
         
+        return results
+
     def evaluate_embedding_classification(
         self,
         embedding: np.ndarray,
