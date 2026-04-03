@@ -8,7 +8,9 @@ try:
         QuVINEGCNMF,
         normalize_adjacency,
         train_gcn_mf,
-        precompute_quantum_diffusion
+        precompute_quantum_diffusion,
+        generate_baseline_gcnmf_embedding,
+        generate_baseline_filter_embedding_wrapper
     )
     __all__ = [
         "run_node2vec",
@@ -18,7 +20,9 @@ try:
         "QuVINEGCNMF",
         "normalize_adjacency",
         "train_gcn_mf",
-        "precompute_quantum_diffusion"
+        "precompute_quantum_diffusion",
+        "generate_baseline_gcnmf_embedding",
+        "generate_baseline_filter_embedding_wrapper"
     ]
 except ImportError:
     # PyTorch not available

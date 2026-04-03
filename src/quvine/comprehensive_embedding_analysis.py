@@ -350,7 +350,8 @@ class ComprehensiveEmbeddingAnalysis:
         Parameters
         ----------
         method_name : str
-            One of: 'rwr', 'ctqw', 'dtqw', 'fused', 'netmf', 'node2vec'
+            One of: 'rwr', 'ctqw', 'dtqw', 'fused', 'netmf', 'node2vec',
+                    'baseline_gcnmf', 'baseline_filter'
         G : nx.Graph
             Input graph
         seeds : list
@@ -390,6 +391,33 @@ class ComprehensiveEmbeddingAnalysis:
                 min_count=1,
                 workers=4,
                 seed=self.base_seed
+            )
+        
+        elif method_name == 'baseline_gcnmf':
+            # Baseline GCN-MF without quantum calibration
+            from quvine.baselines.gcn_mf import generate_baseline_gcnmf_embedding
+            return generate_baseline_gcnmf_embedding(
+                G=G,
+                embedding_dim=self.embedding_dim,
+                hidden_dim=64,
+                mf_dim=64,
+                n_layers=2,
+                epochs=200,
+                lr=0.01,
+                weight_decay=5e-4,
+                random_state=self.base_seed
+            )
+        
+        elif method_name == 'baseline_filter':
+            # Baseline graph filter without quantum calibration (heat kernel)
+            from quvine.baselines.gcn_mf import generate_baseline_filter_embedding_wrapper
+            return generate_baseline_filter_embedding_wrapper(
+                G=G,
+                filter_type='heat',
+                t=1.0,
+                embedding_dim=self.embedding_dim,
+                normalize=True,
+                random_state=self.base_seed
             )
         
         elif method_name in ['rwr', 'ctqw', 'dtqw', 'fused']:

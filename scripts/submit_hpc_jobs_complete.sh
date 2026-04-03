@@ -21,7 +21,7 @@
 #   --methods METHODS    Comma-separated list of methods (default: all)
 #                        Available: quvine_fused, quvine_ctqw, quvine_dtqw, quvine_rwr,
 #                                   quvine_heat, quvine_poly, quvine_hgcnmf, quvine_pgcnmf,
-#                                   netmf, node2vec
+#                                   netmf, node2vec, baseline_gcnmf, baseline_filter
 #                        Use 'all' for all methods, 'quantum' for QuVINE only, 'classical' for baselines
 #   --dry-run            Print commands without submitting
 #
@@ -43,9 +43,9 @@ DRY_RUN=false
 PYTHON_ENV="venv_quvine/bin/python"
 
 # All available methods
-ALL_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec"
+ALL_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter"
 QUANTUM_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf"
-CLASSICAL_METHODS="netmf,node2vec"
+CLASSICAL_METHODS="netmf,node2vec,baseline_gcnmf,baseline_filter"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

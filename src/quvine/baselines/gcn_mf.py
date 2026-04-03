@@ -693,5 +693,189 @@ def generate_qcaliber_gcnmf_poly_embedding(G, q_targets, embedding_dim=128,
         diffusion_type='poly', poly_coeffs=poly_coeffs, K=K, ridge=ridge, **kwargs
     )
 
+def generate_baseline_gcnmf_embedding(
+    G: nx.Graph,
+    embedding_dim: int = 128,
+    hidden_dim: int = 64,
+    mf_dim: int = 64,
+    n_layers: int = 2,
+    epochs: int = 200,
+    lr: float = 0.01,
+    weight_decay: float = 5e-4,
+    random_state: int = 42
+) -> np.ndarray:
+    """
+    Generate baseline GCN-MF embeddings (WITHOUT quantum calibration).
+    
+    This serves as a classical baseline to compare against QuVINE methods.
+    Uses standard GCN-MF without any quantum-calibrated diffusion.
+    
+    Args:
+        G: NetworkX graph
+        embedding_dim: Final embedding dimension
+        hidden_dim: GCN hidden dimension
+        mf_dim: Matrix factorization dimension
+        n_layers: Number of GCN layers
+        epochs: Training epochs
+        lr: Learning rate
+        weight_decay: L2 regularization
+        random_state: Random seed
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> import networkx as nx
+        >>> from quvine.baselines.gcn_mf import generate_baseline_gcnmf_embedding
+        >>> 
+        >>> G = nx.karate_club_graph()
+        >>> embeddings = generate_baseline_gcnmf_embedding(G, embedding_dim=128)
+        >>> print(embeddings.shape)  # (34, 128)
+    """
+    if not TORCH_AVAILABLE:
+        raise ImportError("PyTorch is required for GCN-MF. Install with: pip install torch")
+    
+    import torch
+    import torch.nn.functional as F
+    import torch.optim as optim
+    
+    np.random.seed(random_state)
+    torch.manual_seed(random_state)
+    
+    N = G.number_of_nodes()
+    
+    # Get adjacency matrix and normalize
+    A = nx.adjacency_matrix(G)
+    A_norm = normalize_adjacency(A)
+    
+    # Convert to PyTorch tensors
+    A_norm_torch = torch.FloatTensor(A_norm.toarray())
+    
+    # Generate random input features (no diffusion)
+    X = np.random.randn(N, embedding_dim)
+    X = X / np.linalg.norm(X, axis=1, keepdims=True)
+    X_torch = torch.FloatTensor(X)
+    
+    # Create baseline GCNMF model
+    model = GCNMF(
+        n_nodes=N,
+        input_dim=embedding_dim,
+        hidden_dim=hidden_dim,
+        output_dim=embedding_dim,
+        mf_dim=mf_dim,
+        n_layers=n_layers
+    )
+    
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    # Training loop
+    model.train()
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        
+        # Forward pass
+        _ = model(X_torch, A_norm_torch)
+        
+        # Unsupervised loss: reconstruct adjacency matrix
+        embeddings = model.get_embeddings(X_torch, A_norm_torch)
+        
+        # Sample edges for efficiency
+        edges = list(G.edges())
+        if len(edges) > 1000:
+            sampled_edges = np.random.choice(len(edges), 1000, replace=False)
+            edges = [edges[i] for i in sampled_edges]
+        
+        # Compute reconstruction loss
+        loss = 0.0
+        for u, v in edges:
+            sim = torch.dot(embeddings[u], embeddings[v])
+            loss += F.binary_cross_entropy_with_logits(sim, torch.tensor(1.0))
+        
+        # Add negative samples
+        non_edges = list(nx.non_edges(G))
+        if len(non_edges) > 1000:
+            sampled_non_edges = np.random.choice(len(non_edges), 1000, replace=False)
+            non_edges = [non_edges[i] for i in sampled_non_edges]
+        
+        for u, v in non_edges:
+            sim = torch.dot(embeddings[u], embeddings[v])
+            loss += F.binary_cross_entropy_with_logits(sim, torch.tensor(0.0))
+        
+        loss = loss / (len(edges) + len(non_edges))
+        
+        # Backward pass
+        loss.backward()
+        optimizer.step()
+        
+        if (epoch + 1) % 50 == 0:
+            print(f"Baseline GCN-MF Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
+    
+    # Extract final embeddings
+    model.eval()
+    with torch.no_grad():
+        final_embeddings = model.get_embeddings(X_torch, A_norm_torch)
+        embeddings_np = final_embeddings.cpu().numpy()
+    
+    return embeddings_np
+
+
+def generate_baseline_filter_embedding_wrapper(
+    G: nx.Graph,
+    filter_type: str = 'heat',
+    t: float = 1.0,
+    K: int = 4,
+    embedding_dim: int = 128,
+    normalize: bool = True,
+    random_state: int = 42
+) -> np.ndarray:
+    """
+    Generate baseline graph filter embeddings (WITHOUT quantum calibration).
+    
+    Wrapper for the baseline filter function in quantum_filters.py.
+    This serves as a classical baseline to compare against QuVINE methods.
+    
+    Args:
+        G: NetworkX graph
+        filter_type: Type of filter ('heat' or 'poly')
+        t: Time parameter for heat kernel (if filter_type='heat')
+        K: Polynomial degree (if filter_type='poly')
+        embedding_dim: Embedding dimension
+        normalize: Whether to normalize Laplacian
+        random_state: Random seed
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> import networkx as nx
+        >>> from quvine.baselines.gcn_mf import generate_baseline_filter_embedding_wrapper
+        >>> 
+        >>> G = nx.karate_club_graph()
+        >>> 
+        >>> # Heat kernel baseline
+        >>> embeddings_heat = generate_baseline_filter_embedding_wrapper(
+        ...     G, filter_type='heat', t=1.0, embedding_dim=128
+        ... )
+        >>> 
+        >>> # Polynomial filter baseline
+        >>> embeddings_poly = generate_baseline_filter_embedding_wrapper(
+        ...     G, filter_type='poly', K=4, embedding_dim=128
+        ... )
+    """
+    from quvine.embedding.quantum_filters import generate_baseline_filter_embedding
+    
+    return generate_baseline_filter_embedding(
+        G=G,
+        filter_type=filter_type,
+        t=t,
+        K=K,
+        embedding_dim=embedding_dim,
+        use_features=False,
+        features=None,
+        normalize=normalize,
+        random_state=random_state
+    )
+
+
 
 # Made with Bob
