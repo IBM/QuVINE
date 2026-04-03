@@ -17,16 +17,19 @@ import warnings
 try:
     from qbiocode.evaluation import evaluate
     QBC_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError, Exception) as e:
     QBC_AVAILABLE = False
-    warnings.warn(
-        "QBioCode (qbiocode) not installed. Install with:\n"
-        "  git clone https://github.com/IBM/QBioCode.git\n"
-        "  cd QBioCode\n"
-        "  pip install -e .\n"
-        "For more info: https://github.com/IBM/QBioCode/",
-        ImportWarning
-    )
+    # Only warn if it's a genuine ImportError (package not installed)
+    # Suppress warnings for dependency conflicts (AttributeError, etc.)
+    if isinstance(e, ImportError):
+        warnings.warn(
+            "QBioCode (qbiocode) not installed. Install with:\n"
+            "  git clone https://github.com/IBM/QBioCode.git\n"
+            "  cd QBioCode\n"
+            "  pip install -e .\n"
+            "For more info: https://github.com/IBM/QBioCode/",
+            ImportWarning
+        )
 
 
 def get_laplacian_matrix(
