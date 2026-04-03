@@ -61,7 +61,18 @@ from quvine.evaluation.link_prediction import (
     summarize_link_prediction_results,
     split_edges
 )
+from quvine.embedding.quantum_filters import (
+    generate_quvine_heat_embedding, 
+    generate_quvine_poly_embedding,
+    generate_baseline_filter_embedding
+)
+
+from quvine.baselines.gcn_mf import (
+    generate_baseline_gcnmf_embedding, 
+    generate_quvine_gcnmf_embedding,
+)
 from quvine.embedding.registry import EmbeddingStore
+
 
 
 logging.basicConfig(level=logging.INFO)
@@ -336,6 +347,8 @@ class ComprehensiveEmbeddingAnalysis:
         
         return complexity_df
     
+        
+    
     def run_embedding_method(
         self,
         method_name: str,
@@ -350,8 +363,9 @@ class ComprehensiveEmbeddingAnalysis:
         Parameters
         ----------
         method_name : str
-            One of: 'rwr', 'ctqw', 'dtqw', 'fused', 'netmf', 'node2vec',
-                    'baseline_gcnmf', 'baseline_filter'
+            One of: 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', \ 
+                    'quvine_heat', 'quvine_poly', 'quvine_hgcnmf', 'quvine_pgcnmf', \ 
+                    'netmf', 'node2vec', 'baseline_gcnmf', 'baseline_filter'
         G : nx.Graph
             Input graph
         seeds : list
@@ -395,7 +409,7 @@ class ComprehensiveEmbeddingAnalysis:
         
         elif method_name == 'baseline_gcnmf':
             # Baseline GCN-MF without quantum calibration
-            from quvine.baselines.gcn_mf import generate_baseline_gcnmf_embedding
+
             return generate_baseline_gcnmf_embedding(
                 G=G,
                 embedding_dim=self.embedding_dim,
@@ -410,8 +424,7 @@ class ComprehensiveEmbeddingAnalysis:
         
         elif method_name == 'baseline_filter':
             # Baseline graph filter without quantum calibration (heat kernel)
-            from quvine.baselines.gcn_mf import generate_baseline_filter_embedding_wrapper
-            return generate_baseline_filter_embedding_wrapper(
+            return generate_baseline_filter_embedding(
                 G=G,
                 filter_type='heat',
                 t=1.0,
@@ -420,16 +433,16 @@ class ComprehensiveEmbeddingAnalysis:
                 random_state=self.base_seed
             )
         
-        elif method_name in ['rwr', 'ctqw', 'dtqw', 'fused']:
+        elif method_name in [f'quvine_{x}' for x in ['rwr', 'ctqw', 'dtqw', 'fused']]:
             # QuVINE methods
             if cfg is None:
                 cfg = self._get_default_quvine_config()
             
             # Set walk type
-            if method_name == 'fused':
+            if method_name.split('_')[1] == 'fused':
                 cfg.walks.kinds = ['rwr', 'ctqw', 'dtqw']
             else:
-                cfg.walks.kinds = [method_name]
+                cfg.walks.kinds = [method_name.split("_")[1]]
             
             # Run QuVINE pipeline for this method
             embeddings = self._run_quvine_walks(G, cfg)
@@ -446,6 +459,29 @@ class ComprehensiveEmbeddingAnalysis:
             else:
                 # Return single embedding
                 return list(embeddings.values())[0]
+        
+        elif method_name in ['quvine_'+x for x in ['heat', 'poly']]:
+            
+            if method_name == 'quvine_heat':
+                return generate_quvine_heat_embedding(
+                    G=G, 
+                    ## Include quvine heat filter embedding here 
+                )
+            elif method_name == 'quvine_poly':
+                return generate_quvine_poly_embedding(
+                    G=G, 
+                    diffusion_type='heat',
+                    ## Include quvine poly filter embedding here 
+                )
+            
+        elif method_name in ['quvine_'+x for x in ['hgcnmf', 'pgcnmf']]:
+            
+            if method_name == 'quvine_hgcnmf':
+                return generate_quvine_gcnmf_embedding(
+                    G=G, 
+                    diffusion_type='poly',
+                )
+            
         
         else:
             raise ValueError(f"Unknown method: {method_name}")
@@ -590,8 +626,6 @@ class ComprehensiveEmbeddingAnalysis:
             results[f'precision@{k}_max'] = precision_max
             results[f'recall@{k}_max'] = recall_max
         
-        return results
-
     def evaluate_embedding_classification(
         self,
         embedding: np.ndarray,
@@ -867,16 +901,16 @@ class ComprehensiveEmbeddingAnalysis:
         # Performance metrics to analyze (task-specific)
         if task_name == 'ranking':
             performance_metrics = [col for col in performance_df.columns
-                                 if 'precision@' in col or 'recall@' in col]
+                                if 'precision@' in col or 'recall@' in col]
         elif task_name == 'classification':
             performance_metrics = [col for col in performance_df.columns
-                                 if 'f1_' in col or 'accuracy_' in col or col in ['mean_f1_macro', 'mean_accuracy']]
+                                if 'f1_' in col or 'accuracy_' in col or col in ['mean_f1_macro', 'mean_accuracy']]
         elif task_name == 'link_prediction':
             performance_metrics = [col for col in performance_df.columns
-                                 if 'auc_' in col or 'mrr' in col or col in ['mean_auc_roc', 'mean_auc_pr', 'mean_mrr']]
+                                if 'auc_' in col or 'mrr' in col or col in ['mean_auc_roc', 'mean_auc_pr', 'mean_mrr']]
         else:
             performance_metrics = [col for col in performance_df.columns
-                                 if col not in ['network_id', 'method', 'network_type']]
+                                if col not in ['network_id', 'method', 'network_type']]
         
         # Compute correlations for each method
         correlation_results = []
@@ -953,7 +987,7 @@ class ComprehensiveEmbeddingAnalysis:
     def _plot_complexity_distributions(self, complexity_df: pd.DataFrame, viz_dir: Path):
         """Plot complexity metric distributions by network type."""
         metrics = ['quantum_complexity', 'von_neumann_entropy', 'spectral_gap',
-                  'inverse_participation_ratio', 'participation_ratio']
+                'inverse_participation_ratio', 'participation_ratio']
         
         fig, axes = plt.subplots(2, 3, figsize=(15, 10))
         axes = axes.flatten()
@@ -976,7 +1010,7 @@ class ComprehensiveEmbeddingAnalysis:
     def _plot_performance_comparison(self, performance_df: pd.DataFrame, viz_dir: Path):
         """Plot performance comparison across methods."""
         metrics = ['precision@20_centroid', 'recall@20_centroid',
-                  'precision@50_centroid', 'recall@50_centroid']
+                    'precision@50_centroid', 'recall@50_centroid']
         
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
         axes = axes.flatten()
@@ -988,7 +1022,7 @@ class ComprehensiveEmbeddingAnalysis:
                 data = data.sort_values('mean', ascending=False)
                 
                 ax.bar(range(len(data)), data['mean'], yerr=data['std'],
-                      capsize=5, alpha=0.7)
+                        capsize=5, alpha=0.7)
                 ax.set_xticks(range(len(data)))
                 ax.set_xticklabels(data.index, rotation=45, ha='right')
                 ax.set_ylabel(metric.replace('_', ' ').title())
@@ -1023,7 +1057,7 @@ class ComprehensiveEmbeddingAnalysis:
             
             plt.figure(figsize=(12, 8))
             sns.heatmap(pivot, annot=True, fmt='.2f', cmap='RdBu_r',
-                       center=0, vmin=-1, vmax=1, cbar_kws={'label': 'Pearson Correlation'})
+                        center=0, vmin=-1, vmax=1, cbar_kws={'label': 'Pearson Correlation'})
             plt.title(f'Complexity-Performance Correlations: {method.upper()}')
             plt.tight_layout()
             plt.savefig(viz_dir / f"correlation_heatmap_{method}.png", dpi=300, bbox_inches='tight')
@@ -1061,7 +1095,7 @@ class ComprehensiveEmbeddingAnalysis:
             method_df = merged_df[merged_df['method'] == method]
             
             ax.scatter(method_df[complexity_metric], method_df[perf_metric],
-                      alpha=0.6, s=50)
+                        alpha=0.6, s=50)
             ax.set_xlabel(complexity_metric.replace('_', ' ').title())
             ax.set_ylabel(perf_metric.replace('_', ' ').title())
             ax.set_title(f"{method.upper()}\nr={row['pearson_correlation']:.2f}, p={row['pearson_pvalue']:.3f}")
@@ -1631,4 +1665,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# Made with Bob
+
