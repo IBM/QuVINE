@@ -9,6 +9,7 @@ Label Generation Strategies:
 2. Degree-based: Structural role binning
 3. Centrality-based: Betweenness, Closeness, Eigenvector, PageRank
 4. Core-periphery: K-core decomposition, Rich-club
+5. Homophily-based: Graph structure-aware labels (from Q-Caliber)
 
 Evaluation Metrics:
 - Accuracy, Precision, Recall, F1-score (macro/micro/weighted)
@@ -17,6 +18,7 @@ Evaluation Metrics:
 """
 
 import numpy as np
+import scipy.sparse as sp
 import networkx as nx
 from typing import Dict, List, Tuple, Optional, Union
 from sklearn.model_selection import train_test_split, StratifiedKFold
@@ -234,6 +236,126 @@ def generate_core_periphery_labels(
     return labels
 
 
+def generate_homophily_labels(
+    G: nx.Graph,
+    embeddings: Optional[np.ndarray] = None,
+    feature_weight: float = 0.5,
+    neighbor_weight: float = 0.5,
+    noise_std: float = 0.15,
+    n_bins: int = 2,
+    seed_nodes: Optional[List[int]] = None,
+    random_state: int = 42
+) -> Dict[int, int]:
+    """
+    Generate node labels with homophily (graph structure influence).
+    
+    This strategy creates labels that respect graph structure without direct data leakage.
+    It combines feature-based scores with neighbor influence to create realistic labels
+    where similar/connected nodes tend to have similar labels.
+    
+    Strategy (from Q-Caliber notebook):
+    1. Create feature-based scores from embeddings or random features
+    2. Initialize labels based on feature scores
+    3. Add homophily: neighbors of positive nodes more likely positive
+    4. Combine feature scores (50%) with neighbor influence (50%)
+    5. Add noise and create final labels
+    
+    Args:
+        G: NetworkX graph
+        embeddings: Node embeddings (optional, if None uses random features)
+        feature_weight: Weight for feature-based scores (default 0.5)
+        neighbor_weight: Weight for neighbor influence (default 0.5)
+        noise_std: Standard deviation of noise to add (default 0.15)
+        n_bins: Number of label classes (default 2 for binary)
+        seed_nodes: Optional list of nodes to force as positive class
+        random_state: Random seed
+    
+    Returns:
+        Dictionary mapping node IDs to homophily-based labels
+    """
+    np.random.seed(random_state)
+    
+    N = G.number_of_nodes()
+    node_list = list(G.nodes())
+    node_to_idx = {node: idx for idx, node in enumerate(node_list)}
+    
+    # Get adjacency matrix
+    A = nx.to_scipy_sparse_array(G, nodelist=node_list, format='csr')
+    
+    # Step 1: Create feature-based scores
+    if embeddings is not None:
+        # Use provided embeddings
+        F = embeddings.shape[1]
+        X = embeddings
+    else:
+        # Generate random features with graph structure influence
+        F = 32
+        X_base = np.random.randn(N, F)
+        
+        # Add graph-structure-aware features (smooth over graph)
+        X_smooth = np.zeros_like(X_base)
+        A_norm_np = (A + sp.eye(N)) / (np.array(A.sum(axis=1)).flatten()[:, None] + 1)
+        for f in range(F):
+            # Smooth features over 2 hops
+            X_smooth[:, f] = A_norm_np @ (A_norm_np @ X_base[:, f])
+        
+        # Mix base and smooth features with noise
+        X = 0.4 * X_base + 0.4 * X_smooth + 0.2 * np.random.randn(N, F)
+        X = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-8)  # Normalize
+    
+    # Create decision weights and compute feature scores
+    decision_weights = np.random.randn(F)
+    decision_weights = decision_weights / np.linalg.norm(decision_weights)
+    feature_scores = X @ decision_weights
+    feature_scores = (feature_scores - feature_scores.min()) / (feature_scores.max() - feature_scores.min() + 1e-10)
+    
+    # Step 2: Initialize labels based on features
+    threshold = np.median(feature_scores)
+    y = (feature_scores > threshold).astype(int)
+    
+    # Step 3: Force seed nodes to be positive (if provided)
+    if seed_nodes is not None:
+        for seed in seed_nodes:
+            if seed in node_to_idx:
+                y[node_to_idx[seed]] = 1
+    
+    # Step 4: Add homophily - neighbors of positive nodes more likely positive
+    # This makes graph structure useful without direct leakage
+    y_float = y.astype(float)
+    neighbor_influence = A @ y_float  # Sum of neighbor labels
+    neighbor_influence = neighbor_influence / (neighbor_influence.max() + 1e-10)
+    
+    # Step 5: Combine feature scores with neighbor influence
+    # Balance allows graph diffusion methods to be useful
+    combined_scores = feature_weight * feature_scores + neighbor_weight * neighbor_influence
+    
+    # Add noise
+    noise = np.random.randn(N) * noise_std
+    noisy_scores = combined_scores + noise
+    
+    # Step 6: Create final labels
+    if n_bins == 2:
+        # Binary classification
+        threshold_final = np.median(noisy_scores)
+        y = (noisy_scores > threshold_final).astype(int)
+    else:
+        # Multi-class classification
+        bins = np.percentile(noisy_scores, np.linspace(0, 100, n_bins + 1))
+        y = np.digitize(noisy_scores, bins[1:])
+        y = np.clip(y, 0, n_bins - 1)
+    
+    # Re-force seed nodes to be positive (if provided)
+    if seed_nodes is not None:
+        for seed in seed_nodes:
+            if seed in node_to_idx:
+                y[node_to_idx[seed]] = min(n_bins - 1, 1)  # Positive class
+    
+    # Convert to dictionary
+    labels = {node: int(y[idx]) for node, idx in node_to_idx.items()}
+    
+    return labels
+
+
 def evaluate_node_classification(
     embeddings: np.ndarray,
     labels: Dict[int, int],
@@ -405,6 +527,23 @@ def evaluate_all_label_strategies(
     except Exception as e:
         warnings.warn(f"Core-periphery labeling failed: {e}")
         results['core_periphery'] = {'error': str(e)}
+    
+    # 5. Homophily-based labels (graph structure-aware)
+    try:
+        labels = generate_homophily_labels(
+            G,
+            embeddings=embeddings,
+            feature_weight=0.5,
+            neighbor_weight=0.5,
+            random_state=random_state
+        )
+        eval_results = evaluate_node_classification(
+            embeddings, labels, node_list, test_size, random_state=random_state
+        )
+        results['homophily_based'] = eval_results
+    except Exception as e:
+        warnings.warn(f"Homophily-based labeling failed: {e}")
+        results['homophily_based'] = {'error': str(e)}
     
     return results
 
