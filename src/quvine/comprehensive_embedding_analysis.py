@@ -156,15 +156,29 @@ class ComprehensiveEmbeddingAnalysis:
     
     def load_benchmark_networks(self) -> List[Tuple[str, nx.Graph, List[int], List[int]]]:
         """
-        Load real-world benchmark networks for testing.
+        Load real-world benchmark networks and synthetic benchmarks for testing.
+        
+        Includes:
+        - NetworkX built-in graphs (Karate Club, Les Miserables, etc.)
+        - Synthetic benchmarks from random_graphs.py (Watts-Strogatz, Powerlaw Cluster, etc.)
         
         Returns
         -------
         list of tuples
             Each tuple contains (network_id, graph, seeds, targets)
         """
+        from quvine.data.random_graphs import (
+            generate_watts_strogatz,
+            generate_powerlaw_cluster,
+            generate_hierarchical_network,
+            generate_core_periphery,
+            generate_erdos_renyi
+        )
+        
         logger.info("Loading benchmark networks...")
         networks = []
+        
+        # ===== NetworkX Built-in Graphs =====
         
         # 1. Karate Club (34 nodes)
         try:
@@ -214,7 +228,59 @@ class ComprehensiveEmbeddingAnalysis:
         except Exception as e:
             logger.warning(f"  Failed to load Florentine Families: {e}")
         
-        logger.info(f"Loaded {len(networks)} benchmark networks")
+        # ===== Synthetic Benchmarks from random_graphs.py =====
+        
+        # 6. Watts-Strogatz Small-World (200 nodes)
+        try:
+            G = generate_watts_strogatz(n=self.n_nodes, k=6, p=0.1, seed=self.base_seed)
+            if nx.is_connected(G):
+                seeds, targets = self._select_seeds_targets(G)
+                networks.append(("benchmark_watts_strogatz", G, seeds, targets))
+                logger.info(f"  Generated Watts-Strogatz: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        except Exception as e:
+            logger.warning(f"  Failed to generate Watts-Strogatz: {e}")
+        
+        # 7. Powerlaw Cluster (200 nodes)
+        try:
+            G = generate_powerlaw_cluster(n=self.n_nodes, m=3, p=0.1, seed=self.base_seed)
+            if nx.is_connected(G):
+                seeds, targets = self._select_seeds_targets(G)
+                networks.append(("benchmark_powerlaw_cluster", G, seeds, targets))
+                logger.info(f"  Generated Powerlaw Cluster: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        except Exception as e:
+            logger.warning(f"  Failed to generate Powerlaw Cluster: {e}")
+        
+        # 8. Hierarchical Network (200 nodes)
+        try:
+            G, _ = generate_hierarchical_network(levels=3, branching_factor=4, seed=self.base_seed)
+            if nx.is_connected(G):
+                seeds, targets = self._select_seeds_targets(G)
+                networks.append(("benchmark_hierarchical", G, seeds, targets))
+                logger.info(f"  Generated Hierarchical: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        except Exception as e:
+            logger.warning(f"  Failed to generate Hierarchical: {e}")
+        
+        # 9. Core-Periphery (200 nodes)
+        try:
+            G, _, _ = generate_core_periphery(n_core=50, n_periphery=150, p_core=0.3, p_core_periphery=0.1, p_periphery=0.05, seed=self.base_seed)
+            if nx.is_connected(G):
+                seeds, targets = self._select_seeds_targets(G)
+                networks.append(("benchmark_core_periphery", G, seeds, targets))
+                logger.info(f"  Generated Core-Periphery: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        except Exception as e:
+            logger.warning(f"  Failed to generate Core-Periphery: {e}")
+        
+        # 10. Erdos-Renyi (200 nodes)
+        try:
+            G = generate_erdos_renyi(n=self.n_nodes, p=0.02, seed=self.base_seed)
+            if nx.is_connected(G):
+                seeds, targets = self._select_seeds_targets(G)
+                networks.append(("benchmark_erdos_renyi", G, seeds, targets))
+                logger.info(f"  Generated Erdos-Renyi: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        except Exception as e:
+            logger.warning(f"  Failed to generate Erdos-Renyi: {e}")
+        
+        logger.info(f"Loaded {len(networks)} benchmark networks (real + synthetic)")
         return networks
     
     def generate_networks(self, include_benchmarks: bool = True) -> List[Tuple[str, nx.Graph, List[int], List[int]]]:
@@ -363,8 +429,8 @@ class ComprehensiveEmbeddingAnalysis:
         Parameters
         ----------
         method_name : str
-            One of: 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', \ 
-                    'quvine_heat', 'quvine_poly', 'quvine_hgcnmf', 'quvine_pgcnmf', \ 
+            One of: 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused',
+                    'quvine_heat', 'quvine_poly', 'quvine_hgcnmf', 'quvine_pgcnmf',
                     'netmf', 'node2vec', 'baseline_gcnmf', 'baseline_filter'
         G : nx.Graph
             Input graph
@@ -433,58 +499,293 @@ class ComprehensiveEmbeddingAnalysis:
                 random_state=self.base_seed
             )
         
-        elif method_name in [f'quvine_{x}' for x in ['rwr', 'ctqw', 'dtqw', 'fused']]:
-            # QuVINE methods
+        elif method_name in [f'quvine_{x}' for x in ['rwr', 'ctqw', 'dtqw']]:
+            # QuVINE walk-based methods
             if cfg is None:
                 cfg = self._get_default_quvine_config()
             
             # Set walk type
-            if method_name.split('_')[1] == 'fused':
-                cfg.walks.kinds = ['rwr', 'ctqw', 'dtqw']
-            else:
-                cfg.walks.kinds = [method_name.split("_")[1]]
+            cfg.walks.kinds = [method_name.split("_")[1]]
             
             # Run QuVINE pipeline for this method
             embeddings = self._run_quvine_walks(G, cfg)
             
-            if method_name == 'fused' and len(embeddings) > 1:
-                # Fuse embeddings
-                store = EmbeddingStore()
-                for name, Z in embeddings.items():
-                    store.add(name, Z)
-                
-                L = nx.normalized_laplacian_matrix(G, nodelist=nodes).toarray().astype(np.float32)
-                fused_list, _ = fuse_embeddings(store, method='concatenate', k=3, L=L)
-                return fused_list[0]
+            # Return single embedding
+            return list(embeddings.values())[0]
+        
+        elif method_name.startswith('quvine_fused'):
+            # Fused embedding of any subset of QuVINE methods
+            # Format options:
+            #   quvine_fused                          -> all methods, svd fusion
+            #   quvine_fused_svd                      -> all methods, svd fusion
+            #   quvine_fused_graphreg                 -> all methods, graphreg fusion
+            #   quvine_fused_attention                -> all methods, attention fusion
+            #   quvine_fused_hybrid                   -> all methods, hybrid fusion
+            #   quvine_fused_svd_shared_priv          -> 2 methods, svd shared/private (attention gate)
+            #   quvine_fused_svd_shared_priv_moe      -> 2 methods, svd shared/private (mixture of experts)
+            #   quvine_fused_svd_ctqw_heat            -> ctqw+heat, svd fusion
+            #   quvine_fused_attention_rwr_poly_hgcnmf -> rwr+poly+hgcnmf, attention fusion
+            #   quvine_fused_svd_shared_priv_heat_poly -> heat+poly, svd shared/private (attention gate)
+            
+            # Parse fusion method and embedding methods
+            parts = method_name.split('_')
+            
+            # Determine fusion method
+            fusion_methods = ['svd', 'graphreg', 'attention', 'hybrid', 'svd_shared_priv']
+            fusion_method = 'svd'  # default
+            gate_type = 'attention'  # default for svd_shared_priv
+            methods_to_fuse = []
+            
+            if len(parts) == 2:  # quvine_fused - use all methods, svd fusion
+                methods_to_fuse = ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
+            elif len(parts) >= 3:
+                # Check if third part is a fusion method or part of svd_shared_priv
+                if parts[2] == 'svd' and len(parts) >= 4 and parts[3] == 'shared':
+                    # Handle svd_shared_priv fusion
+                    fusion_method = 'svd_shared_priv'
+                    # Check for gate type (moe) or embedding methods
+                    if len(parts) >= 5:
+                        if parts[4] == 'priv':
+                            # quvine_fused_svd_shared_priv or quvine_fused_svd_shared_priv_moe
+                            if len(parts) >= 6:
+                                if parts[5] == 'moe':
+                                    gate_type = 'moe'
+                                    methods_to_fuse = parts[6:] if len(parts) > 6 else ['heat', 'poly']
+                                else:
+                                    # Embedding methods after priv
+                                    methods_to_fuse = parts[5:]
+                            else:
+                                # Default: heat and poly
+                                methods_to_fuse = ['heat', 'poly']
+                        else:
+                            # Embedding methods after shared
+                            methods_to_fuse = parts[4:]
+                    else:
+                        # Default: heat and poly
+                        methods_to_fuse = ['heat', 'poly']
+                elif parts[2] in fusion_methods:
+                    fusion_method = parts[2]
+                    if len(parts) > 3:
+                        # Remaining parts are embedding methods
+                        methods_to_fuse = parts[3:]
+                    else:
+                        # Use all methods
+                        methods_to_fuse = ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
+                else:
+                    # All parts after 'fused' are embedding methods, use default svd
+                    methods_to_fuse = parts[2:]
+            
+            # Validate for svd_shared_priv: must have exactly 2 methods
+            if fusion_method == 'svd_shared_priv' and len(methods_to_fuse) != 2:
+                raise ValueError(f"svd_shared_priv fusion requires exactly 2 embedding methods, got {len(methods_to_fuse)}: {methods_to_fuse}")
+            
+            logger.info(f"Fusing embeddings from methods: {methods_to_fuse} using {fusion_method} fusion")
+            
+            # Generate embeddings for each method
+            store = EmbeddingStore()
+            for method in methods_to_fuse:
+                try:
+                    emb = self.run_embedding_method(
+                        method_name=f'quvine_{method}',
+                        G=G,
+                        seeds=seeds,
+                        targets=targets,
+                        cfg=cfg
+                    )
+                    store.add(method, emb)
+                    logger.info(f"  Added {method} embedding: shape {emb.shape}")
+                except Exception as e:
+                    logger.warning(f"  Failed to generate {method} embedding: {e}")
+            
+            if len(store.names()) == 0:
+                raise ValueError("No embeddings were successfully generated for fusion")
+            
+            # Fuse embeddings using specified method
+            L = nx.normalized_laplacian_matrix(G, nodelist=nodes).toarray().astype(np.float32)
+            
+            # Pass gate_type for svd_shared_priv fusion
+            if fusion_method == 'svd_shared_priv':
+                svd_rank = self.embedding_dim // 4  # k = d // 4 as suggested
+                fused_list, _ = fuse_embeddings(
+                    store, method=fusion_method, k=self.embedding_dim, L=L,
+                    svd_rank=svd_rank, gate_type=gate_type
+                )
             else:
-                # Return single embedding
-                return list(embeddings.values())[0]
+                fused_list, _ = fuse_embeddings(store, method=fusion_method, k=self.embedding_dim, L=L)
+            
+            logger.info(f"Fused embedding ({fusion_method}) shape: {fused_list[0].shape}")
+            return fused_list[0]
         
         elif method_name in ['quvine_'+x for x in ['heat', 'poly']]:
+            # QuVINE quantum-calibrated filter embeddings
+            # Generate quantum targets from seeds for calibration
+            q_targets = self._generate_quantum_targets(G, seeds)
             
             if method_name == 'quvine_heat':
                 return generate_quvine_heat_embedding(
-                    G=G, 
-                    ## Include quvine heat filter embedding here 
+                    G=G,
+                    q_targets=q_targets,
+                    embedding_dim=self.embedding_dim,
+                    normalize=True,
+                    random_state=self.base_seed
                 )
             elif method_name == 'quvine_poly':
                 return generate_quvine_poly_embedding(
-                    G=G, 
-                    diffusion_type='heat',
-                    ## Include quvine poly filter embedding here 
+                    G=G,
+                    q_targets=q_targets,
+                    K=4,
+                    ridge=1e-6,
+                    embedding_dim=self.embedding_dim,
+                    normalize=True,
+                    random_state=self.base_seed
                 )
             
         elif method_name in ['quvine_'+x for x in ['hgcnmf', 'pgcnmf']]:
+            # QuVINE quantum-calibrated GCN-MF embeddings
+            # Generate quantum targets from seeds for calibration
+            q_targets = self._generate_quantum_targets(G, seeds)
             
             if method_name == 'quvine_hgcnmf':
-                return generate_quvine_gcnmf_embedding(
-                    G=G, 
-                    diffusion_type='poly',
+                # Heat kernel + GCN-MF
+                # Note: hidden_dim is the final embedding dimension in GCN-MF
+                embeddings, _ = generate_quvine_gcnmf_embedding(
+                    G=G,
+                    q_targets=q_targets,
+                    embedding_dim=self.embedding_dim,
+                    diffusion_type='heat',
+                    hidden_dim=self.embedding_dim,  # Use embedding_dim as hidden_dim for consistency
+                    mf_dim=self.embedding_dim // 2,  # MF dimension is half of embedding_dim
+                    n_layers=2,
+                    epochs=200,
+                    lr=0.01,
+                    weight_decay=5e-4,
+                    normalize_laplacian=True,
+                    random_state=self.base_seed
                 )
-            
+                return embeddings
+            elif method_name == 'quvine_pgcnmf':
+                # Polynomial filter + GCN-MF
+                # Note: hidden_dim is the final embedding dimension in GCN-MF
+                embeddings, _ = generate_quvine_gcnmf_embedding(
+                    G=G,
+                    q_targets=q_targets,
+                    embedding_dim=self.embedding_dim,
+                    diffusion_type='poly',
+                    K=4,
+                    ridge=1e-6,
+                    hidden_dim=self.embedding_dim,  # Use embedding_dim as hidden_dim for consistency
+                    mf_dim=self.embedding_dim // 2,  # MF dimension is half of embedding_dim
+                    n_layers=2,
+                    epochs=200,
+                    lr=0.01,
+                    weight_decay=5e-4,
+                    normalize_laplacian=True,
+                    random_state=self.base_seed
+                )
+                return embeddings
         
         else:
             raise ValueError(f"Unknown method: {method_name}")
+    
+    def _generate_quantum_targets(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        num_subgraphs: int = 5,
+        subgraph_size: int = 20,
+        ctqw_steps: int = 20
+    ) -> List[Dict]:
+        """
+        Generate quantum walk targets for calibration.
+        
+        Samples subgraphs around seed nodes and runs CTQW to get probability distributions.
+        
+        Parameters
+        ----------
+        G : nx.Graph
+            Input graph
+        seeds : list
+            Seed nodes to sample around
+        num_subgraphs : int
+            Number of subgraphs to sample
+        subgraph_size : int
+            Size of each subgraph
+        ctqw_steps : int
+            Number of CTQW steps
+            
+        Returns
+        -------
+        list of dict
+            Each dict contains:
+            - 'nodes': List of node IDs in subnetwork
+            - 'center': Center node ID
+            - 'pQ': Quantum walk probability distribution
+        """
+        from quvine.walks.ctqw import generate_ctqw_hiperwalk_scores
+        from quvine.data.subgraph import expand_neighborhood
+        
+        q_targets = []
+        rng = np.random.default_rng(self.base_seed)
+        
+        # Sample subgraphs around seeds
+        sampled_seeds = rng.choice(seeds, size=min(num_subgraphs, len(seeds)), replace=False)
+        
+        for center in sampled_seeds:
+            try:
+                # Expand neighborhood to get subgraph
+                subgraph_nodes = expand_neighborhood(G, {center}, radius=2)
+                
+                # Limit size if needed
+                if len(subgraph_nodes) > subgraph_size:
+                    subgraph_nodes = list(rng.choice(
+                        list(subgraph_nodes),
+                        size=subgraph_size,
+                        replace=False
+                    ))
+                    # Ensure center is included
+                    if center not in subgraph_nodes:
+                        subgraph_nodes[0] = center
+                
+                # Get subgraph
+                H = G.subgraph(subgraph_nodes).copy()
+                
+                # Run CTQW to get probability distribution
+                scores = generate_ctqw_hiperwalk_scores(
+                    H,
+                    root=center,
+                    steps=ctqw_steps
+                )
+                
+                # Convert to probability array
+                nodes_list = list(H.nodes())
+                pQ = np.array([scores.get(n, 0.0) for n in nodes_list])
+                pQ = pQ / pQ.sum() if pQ.sum() > 0 else pQ
+                
+                q_targets.append({
+                    'nodes': nodes_list,
+                    'center': center,
+                    'pQ': pQ
+                })
+                
+            except Exception as e:
+                logger.warning(f"Failed to generate quantum target for seed {center}: {e}")
+                continue
+        
+        if len(q_targets) == 0:
+            logger.warning("No quantum targets generated, using fallback")
+            # Fallback: create a simple target with uniform distribution
+            center = seeds[0]
+            neighbors = list(G.neighbors(center))[:10]
+            nodes_list = [center] + neighbors
+            pQ = np.ones(len(nodes_list)) / len(nodes_list)
+            q_targets.append({
+                'nodes': nodes_list,
+                'center': center,
+                'pQ': pQ
+            })
+        
+        logger.info(f"Generated {len(q_targets)} quantum targets for calibration")
+        return q_targets
     
     def _get_default_quvine_config(self) -> DictConfig:
         """Get default QuVINE configuration."""
