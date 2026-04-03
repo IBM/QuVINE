@@ -2,12 +2,55 @@
 
 Complete guide for deploying QuVINE on HPC clusters with LSF job scheduler.
 
+## ⚠️ IMPORTANT: Python Version Requirements
+
+**QuVINE requires Python 3.10, 3.11, or 3.12 (NOT 3.13+)**
+
+- ✅ **Compatible**: Python 3.10.x, 3.11.x, 3.12.x (3.12 recommended)
+- ❌ **Not compatible**: Python 3.9.x (too old), Python 3.13+ (too new for QBioCode dependency)
+
+If you encounter: `ERROR: Package 'qbiocode' requires a different Python: 3.13.9 not in '<3.13,>=3.9'`
+
+**Solution**: See [Python Version Compatibility Guide](PYTHON_VERSION_GUIDE.md) for detailed instructions.
+
 ## Table of Contents
-1. [Environment Setup](#environment-setup)
-2. [Dependency Installation](#dependency-installation)
-3. [Code Transfer](#code-transfer)
-4. [Running the Pipeline](#running-the-pipeline)
-5. [Troubleshooting](#troubleshooting)
+1. [Python Version Setup](#python-version-setup)
+2. [Environment Setup](#environment-setup)
+3. [Dependency Installation](#dependency-installation)
+4. [Code Transfer](#code-transfer)
+5. [Running the Pipeline](#running-the-pipeline)
+6. [Troubleshooting](#troubleshooting)
+
+---
+
+## Python Version Setup
+
+### Check Your Python Version
+
+```bash
+python --version
+# or
+python3 --version
+```
+
+### If You Have Python 3.13+
+
+You **must** use Python 3.10, 3.11, or 3.12. See [PYTHON_VERSION_GUIDE.md](PYTHON_VERSION_GUIDE.md) for detailed instructions.
+
+**Quick Fix**:
+```bash
+# macOS (using Homebrew)
+brew install python@3.12
+python3.12 -m venv venv_quvine
+
+# Linux/HPC (using module system)
+module load python/3.12
+python3 -m venv venv_quvine
+
+# Using conda
+conda create -n quvine python=3.12
+conda activate quvine
+```
 
 ---
 
