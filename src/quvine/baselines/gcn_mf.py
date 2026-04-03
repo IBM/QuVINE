@@ -484,14 +484,14 @@ def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
     if not TORCH_AVAILABLE:
         raise ImportError("PyTorch is required for GCN-MF. Install with: pip install torch")
     
-    # Import Q-Caliber filters
+    # Import QuVINE quantum filters
     try:
-        from quvine.embedding.qcaliber_filters import (
+        from quvine.embedding.quantum_filters import (
             calibrate_heat_kernel, calibrate_polynomial_filter,
             apply_heat_filter, apply_polynomial_filter
         )
     except ImportError:
-        raise ImportError("Q-Caliber filters module not found. Ensure qcaliber_filters.py exists.")
+        raise ImportError("QuVINE quantum filters module not found. Ensure quantum_filters.py exists.")
     
     import networkx as nx
     import logging
