@@ -12,6 +12,7 @@ Reference:
 
 import numpy as np
 import scipy.sparse as sp
+import networkx as nx
 
 try:
     import torch
