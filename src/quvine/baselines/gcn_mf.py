@@ -423,4 +423,275 @@ def train_gcn_mf(model, x, y, adj, train_mask, val_mask,
     
     return history
 
+
+def generate_qcaliber_gcnmf_embedding(G, q_targets, embedding_dim=128,
+                                      diffusion_type='heat', t_star=None,
+                                      poly_coeffs=None, K=4, ridge=1e-6,
+                                      hidden_dim=64, mf_dim=64, n_layers=2,
+                                      epochs=200, lr=0.01, weight_decay=5e-4,
+                                      normalize_laplacian=True, random_state=42):
+    """
+    Generate Q-Caliber GCN-MF embeddings (Heat or Poly variant).
+    
+    WORKFLOW:
+    1. Calibrate diffusion parameters using quantum walks (if not provided)
+    2. Precompute diffused features OFFLINE
+    3. Train GCN-MF model with diffused features
+    4. Extract final embeddings
+    
+    This is a HIGH-LEVEL wrapper that combines:
+    - Q-Caliber filter calibration (from qcaliber_filters.py)
+    - Offline diffusion precomputation
+    - GCN-MF training
+    - Embedding extraction
+    
+    Args:
+        G: NetworkX graph
+        q_targets: List of quantum walk targets for calibration
+                   Format: [{'nodes': [...], 'center': int, 'pQ': array}, ...]
+        embedding_dim: Final embedding dimension
+        diffusion_type: 'heat' or 'poly'
+        t_star: Pre-calibrated heat kernel time (optional, will calibrate if None)
+        poly_coeffs: Pre-calibrated polynomial coefficients (optional)
+        K: Polynomial degree (for poly diffusion)
+        ridge: Ridge regularization for polynomial calibration
+        hidden_dim: GCN hidden dimension
+        mf_dim: Matrix factorization dimension
+        n_layers: Number of GCN layers
+        epochs: Training epochs
+        lr: Learning rate
+        weight_decay: Weight decay for regularization
+        normalize_laplacian: Whether to normalize Laplacian
+        random_state: Random seed
+    
+    Returns:
+        embeddings: Node embeddings [N, embedding_dim]
+        metadata: Dictionary with calibration info and training history
+    
+    Example:
+        >>> from quvine.baselines.gcn_mf import generate_qcaliber_gcnmf_embedding
+        >>>
+        >>> # Generate Q-Caliber GCN-MF (Heat) embeddings
+        >>> embeddings_heat, meta_heat = generate_qcaliber_gcnmf_embedding(
+        ...     G, q_targets, embedding_dim=128, diffusion_type='heat'
+        ... )
+        >>>
+        >>> # Generate Q-Caliber GCN-MF (Poly) embeddings
+        >>> embeddings_poly, meta_poly = generate_qcaliber_gcnmf_embedding(
+        ...     G, q_targets, embedding_dim=128, diffusion_type='poly', K=4
+        ... )
+    """
+    if not TORCH_AVAILABLE:
+        raise ImportError("PyTorch is required for GCN-MF. Install with: pip install torch")
+    
+    # Import Q-Caliber filters
+    try:
+        from quvine.embedding.qcaliber_filters import (
+            calibrate_heat_kernel, calibrate_polynomial_filter,
+            apply_heat_filter, apply_polynomial_filter
+        )
+    except ImportError:
+        raise ImportError("Q-Caliber filters module not found. Ensure qcaliber_filters.py exists.")
+    
+    import networkx as nx
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Generating Q-Caliber GCN-MF embeddings ({diffusion_type} diffusion)...")
+    
+    # Set random seed
+    np.random.seed(random_state)
+    torch.manual_seed(random_state)
+    
+    # Get graph properties
+    N = G.number_of_nodes()
+    node_list = list(G.nodes())
+    node_to_idx = {node: idx for idx, node in enumerate(node_list)}
+    
+    # Get Laplacian
+    L = nx.laplacian_matrix(G, nodelist=node_list).astype(float)
+    if normalize_laplacian:
+        # Normalized Laplacian: D^(-1/2) L D^(-1/2)
+        D = np.array(L.sum(axis=1)).flatten()
+        D_inv_sqrt = np.power(D, -0.5)
+        D_inv_sqrt[np.isinf(D_inv_sqrt)] = 0.0
+        D_inv_sqrt_mat = sp.diags(D_inv_sqrt)
+        L = D_inv_sqrt_mat @ L @ D_inv_sqrt_mat
+    
+    # Generate random features for diffusion
+    X = np.random.randn(N, embedding_dim).astype(np.float32)
+    
+    metadata = {
+        'diffusion_type': diffusion_type,
+        'n_nodes': N,
+        'embedding_dim': embedding_dim,
+        'hidden_dim': hidden_dim,
+        'mf_dim': mf_dim,
+        'n_layers': n_layers
+    }
+    
+    # STEP 1: Calibrate diffusion parameters (if not provided)
+    if diffusion_type == 'heat':
+        if t_star is None:
+            logger.info("Calibrating heat kernel time parameter...")
+            t_grid = np.linspace(0.1, 5.0, 50)
+            best_loss, t_star = calibrate_heat_kernel(
+                L, q_targets, t_grid, node_to_idx, loss='l2'
+            )
+            logger.info(f"✓ Calibrated t_star = {t_star:.4f} (loss = {best_loss:.6f})")
+        else:
+            logger.info(f"Using provided t_star = {t_star:.4f}")
+        
+        metadata['t_star'] = t_star
+        
+        # STEP 2: Precompute diffused features OFFLINE
+        logger.info("Precomputing heat kernel diffusion...")
+        X_diffused = apply_heat_filter(L, X, t_star)
+        
+    elif diffusion_type == 'poly':
+        if poly_coeffs is None:
+            logger.info(f"Calibrating polynomial filter (degree K={K})...")
+            poly_coeffs = calibrate_polynomial_filter(
+                L, q_targets, node_to_idx, K=K, ridge=ridge
+            )
+            logger.info(f"✓ Calibrated polynomial coefficients: {poly_coeffs}")
+        else:
+            logger.info(f"Using provided polynomial coefficients (degree={len(poly_coeffs)-1})")
+        
+        metadata['poly_coeffs'] = poly_coeffs.tolist() if hasattr(poly_coeffs, 'tolist') else poly_coeffs
+        metadata['K'] = len(poly_coeffs) - 1
+        
+        # STEP 2: Precompute diffused features OFFLINE
+        logger.info("Precomputing polynomial diffusion...")
+        X_diffused = apply_polynomial_filter(L, X, poly_coeffs)
+    
+    else:
+        raise ValueError(f"Unknown diffusion_type: {diffusion_type}. Use 'heat' or 'poly'.")
+    
+    # Convert to torch tensors
+    X_diffused_torch = torch.from_numpy(X_diffused).float()
+    
+    # Get adjacency matrix and normalize
+    adj = nx.adjacency_matrix(G, nodelist=node_list)
+    adj_normalized = normalize_adjacency(adj)
+    
+    # Convert to torch sparse tensor
+    adj_coo = adj_normalized.tocoo()
+    indices = torch.LongTensor(np.vstack([adj_coo.row, adj_coo.col]))
+    values = torch.FloatTensor(adj_coo.data)
+    shape = adj_coo.shape
+    adj_torch = torch.sparse_coo_tensor(indices, values, shape)
+    
+    # STEP 3: Train Q-Caliber GCN-MF model
+    logger.info("Training Q-Caliber GCN-MF model...")
+    
+    # Create model
+    model = QCaliberGCNMF(
+        n_nodes=N,
+        input_dim=embedding_dim,
+        hidden_dim=hidden_dim,
+        output_dim=embedding_dim,  # For unsupervised embedding
+        mf_dim=mf_dim,
+        n_layers=n_layers,
+        dropout=0.5
+    )
+    
+    # For unsupervised training, we use reconstruction loss
+    # Train to reconstruct adjacency matrix from embeddings
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    model.train()
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        
+        # Get embeddings
+        embeddings = model.get_embeddings(X_diffused_torch, adj_torch)
+        
+        # Reconstruction loss: ||A - Z Z^T||^2
+        # Sample edges for efficiency
+        n_samples = min(1000, N * N // 10)
+        edge_indices = torch.randint(0, N, (2, n_samples))
+        
+        # Compute similarity scores
+        scores = (embeddings[edge_indices[0]] * embeddings[edge_indices[1]]).sum(dim=1)
+        
+        # Get true adjacency values
+        true_adj = torch.zeros(n_samples)
+        for i in range(n_samples):
+            u, v = edge_indices[0, i].item(), edge_indices[1, i].item()
+            if G.has_edge(node_list[u], node_list[v]):
+                true_adj[i] = 1.0
+        
+        # Binary cross-entropy loss
+        loss = F.binary_cross_entropy_with_logits(scores, true_adj)
+        
+        loss.backward()
+        optimizer.step()
+        
+        if (epoch + 1) % 50 == 0:
+            logger.info(f"Epoch {epoch+1}/{epochs}: Loss = {loss.item():.4f}")
+    
+    # STEP 4: Extract final embeddings
+    model.eval()
+    with torch.no_grad():
+        final_embeddings = model.get_embeddings(X_diffused_torch, adj_torch)
+        final_embeddings = final_embeddings.cpu().numpy()
+    
+    logger.info(f"✓ Q-Caliber GCN-MF embeddings generated: shape {final_embeddings.shape}")
+    
+    metadata['final_embedding_shape'] = final_embeddings.shape
+    
+    return final_embeddings, metadata
+
+
+def generate_qcaliber_gcnmf_heat_embedding(G, q_targets, embedding_dim=128,
+                                           t_star=None, **kwargs):
+    """
+    Generate Q-Caliber GCN-MF (Heat) embeddings.
+    
+    Convenience wrapper for heat kernel variant.
+    
+    Args:
+        G: NetworkX graph
+        q_targets: Quantum walk targets for calibration
+        embedding_dim: Embedding dimension
+        t_star: Pre-calibrated time parameter (optional)
+        **kwargs: Additional arguments for generate_qcaliber_gcnmf_embedding
+    
+    Returns:
+        embeddings: Node embeddings [N, embedding_dim]
+        metadata: Calibration and training info
+    """
+    return generate_qcaliber_gcnmf_embedding(
+        G, q_targets, embedding_dim=embedding_dim,
+        diffusion_type='heat', t_star=t_star, **kwargs
+    )
+
+
+def generate_qcaliber_gcnmf_poly_embedding(G, q_targets, embedding_dim=128,
+                                           poly_coeffs=None, K=4, ridge=1e-6, **kwargs):
+    """
+    Generate Q-Caliber GCN-MF (Poly) embeddings.
+    
+    Convenience wrapper for polynomial filter variant.
+    
+    Args:
+        G: NetworkX graph
+        q_targets: Quantum walk targets for calibration
+        embedding_dim: Embedding dimension
+        poly_coeffs: Pre-calibrated coefficients (optional)
+        K: Polynomial degree
+        ridge: Ridge regularization
+        **kwargs: Additional arguments for generate_qcaliber_gcnmf_embedding
+    
+    Returns:
+        embeddings: Node embeddings [N, embedding_dim]
+        metadata: Calibration and training info
+    """
+    return generate_qcaliber_gcnmf_embedding(
+        G, q_targets, embedding_dim=embedding_dim,
+        diffusion_type='poly', poly_coeffs=poly_coeffs, K=K, ridge=ridge, **kwargs
+    )
+
+
 # Made with Bob
