@@ -927,6 +927,8 @@ class ComprehensiveEmbeddingAnalysis:
             results[f'precision@{k}_max'] = precision_max
             results[f'recall@{k}_max'] = recall_max
         
+        return results
+    
     def evaluate_embedding_classification(
         self,
         embedding: np.ndarray,
@@ -1063,7 +1065,7 @@ class ComprehensiveEmbeddingAnalysis:
             (ranking_results, classification_results, link_prediction_results)
         """
         network_id, G, seeds, targets = network_tuple
-        methods = ['rwr', 'ctqw', 'dtqw', 'fused', 'netmf', 'node2vec']
+        methods = ['quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', 'netmf', 'node2vec']
         
         ranking_results = []
         classification_results = []
@@ -1116,7 +1118,7 @@ class ComprehensiveEmbeddingAnalysis:
         Networks are processed in parallel, with each network running all methods.
         Evaluates multiple downstream tasks: ranking, classification, link prediction.
         """
-        methods = ['rwr', 'ctqw', 'dtqw', 'fused', 'netmf', 'node2vec']
+        methods = ['quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', 'netmf', 'node2vec']
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")
         logger.info(f"Downstream tasks: ranking=True, classification={include_classification}, link_prediction={include_link_prediction}")
