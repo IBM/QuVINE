@@ -231,7 +231,18 @@ def calibrate_polynomial_filter(
     AtA += ridge * np.eye(K + 1)
     
     # Solve for coefficients
-    coeffs = np.linalg.solve(AtA, Atb)
+    try:
+        coeffs = np.linalg.solve(AtA, Atb)
+    except np.linalg.LinAlgError:
+        logger.warning("Singular matrix in polynomial calibration, using fallback coefficients")
+        # Fallback: simple heat-like decay
+        coeffs = np.array([1.0] + [0.5 ** (k+1) for k in range(K)])
+    
+    # Validate coefficients - check if all are near zero
+    if np.max(np.abs(coeffs)) < 1e-10:
+        logger.warning("Degenerate polynomial coefficients (all near zero), using fallback")
+        # Fallback: simple heat-like decay
+        coeffs = np.array([1.0] + [0.5 ** (k+1) for k in range(K)])
     
     logger.info(f"Polynomial coefficients: {coeffs}")
     return coeffs

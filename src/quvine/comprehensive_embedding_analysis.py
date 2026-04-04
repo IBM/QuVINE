@@ -32,6 +32,13 @@ import seaborn as sns
 from scipy.stats import spearmanr, pearsonr
 from omegaconf import DictConfig, OmegaConf
 from joblib import Parallel, delayed
+try:
+    import optuna
+    from optuna.samplers import TPESampler
+    OPTUNA_AVAILABLE = True
+except ImportError:
+    OPTUNA_AVAILABLE = False
+    optuna = None
 import multiprocessing
 
 from quvine.data.random_graphs import (
@@ -120,6 +127,17 @@ class ComprehensiveEmbeddingAnalysis:
         self.performance_results = []
         self.classification_results = []
         self.link_prediction_results = []
+        
+        # Hyperparameter tuning storage
+        self.tuned_hyperparameters = {
+            'hgcnmf': None,    # Will store tuned params for heat GCN-MF
+            'pgcnmf': None,    # Will store tuned params for poly GCN-MF
+            'node2vec': None,  # Will store tuned params for Node2Vec
+            'netmf': None,     # Will store tuned params for NetMF
+            'rwr': None,       # Will store tuned params for RWR quantum walk
+            'ctqw': None,      # Will store tuned params for CTQW quantum walk
+            'dtqw': None       # Will store tuned params for DTQW quantum walk
+        }
         
     def _select_seeds_targets(self, G: nx.Graph) -> Tuple[List[int], List[int]]:
         """
@@ -414,6 +432,654 @@ class ComprehensiveEmbeddingAnalysis:
         return complexity_df
     
         
+    def tune_gcnmf_hyperparameters(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        diffusion_type: str = 'heat',
+        n_trials: int = 50,
+        timeout: int = 3600,
+        n_jobs_optuna: int = 1
+    ) -> Dict:
+        """
+        Tune GCN-MF hyperparameters using Bayesian optimization (Optuna).
+        
+        This function performs hyperparameter tuning for GCN-MF methods by:
+        1. Creating a validation split (80% train, 20% val)
+        2. Using Optuna's TPE sampler for Bayesian optimization
+        3. Optimizing for validation ranking performance (recall@50)
+        4. Returning best hyperparameters and study results
+        
+        Parameters
+        ----------
+        G : nx.Graph
+            Input graph
+        seeds : list
+            Seed nodes for evaluation
+        targets : list
+            Target nodes for evaluation
+        diffusion_type : str
+            'heat' or 'poly' for diffusion type
+        n_trials : int
+            Number of optimization trials (default: 50)
+        timeout : int
+            Maximum time in seconds for optimization (default: 3600 = 1 hour)
+        n_jobs_optuna : int
+            Number of parallel jobs for Optuna (default: 1, set to -1 for all cores)
+            
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - 'best_params': Best hyperparameters found
+            - 'best_value': Best validation score
+            - 'study': Optuna study object
+            - 'trials_df': DataFrame with all trials
+        
+        Example
+        -------
+        >>> analyzer = ComprehensiveEmbeddingAnalysis()
+        >>> result = analyzer.tune_gcnmf_hyperparameters(
+        ...     G, seeds, targets, diffusion_type='heat', n_trials=30
+        ... )
+        >>> print(f"Best params: {result['best_params']}")
+        >>> print(f"Best recall@50: {result['best_value']:.3f}")
+        """
+        if not OPTUNA_AVAILABLE:
+            raise ImportError(
+                "Optuna is required for hyperparameter tuning. "
+                "Install with: pip install optuna"
+            )
+        
+        logger.info(f"Starting hyperparameter tuning for GCN-MF ({diffusion_type})")
+        logger.info(f"Trials: {n_trials}, Timeout: {timeout}s")
+        
+        # Create train/val split for seeds (80/20) BEFORE generating quantum targets
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)  # 20% for validation
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        
+        logger.info(f"Train seeds: {len(train_seeds)}, Val seeds: {len(val_seeds)}")
+        
+        # Generate quantum targets for calibration using ONLY train seeds (no data leakage)
+        q_targets = self._generate_quantum_targets(G, train_seeds)
+        
+        def objective(trial):
+            """Optuna objective function."""
+            # Suggest hyperparameters
+            n_layers = trial.suggest_int('n_layers', 1, 3)
+            hidden_dim = trial.suggest_categorical('hidden_dim', [64, 128, 256])
+            mf_dim = trial.suggest_categorical('mf_dim', [32, 64, 128])
+            epochs = trial.suggest_int('epochs', 100, 500, step=100)
+            lr = trial.suggest_float('lr', 1e-3, 1e-1, log=True)
+            weight_decay = trial.suggest_float('weight_decay', 1e-5, 1e-3, log=True)
+            
+            # Additional params for polynomial diffusion
+            if diffusion_type == 'poly':
+                K = trial.suggest_int('K', 2, 6)
+                ridge = trial.suggest_float('ridge', 1e-7, 1e-5, log=True)
+            else:
+                K = 4
+                ridge = 1e-6
+            
+            try:
+                # Generate embedding with suggested hyperparameters
+                embeddings, _ = generate_quvine_gcnmf_embedding(
+                    G=G,
+                    q_targets=q_targets,
+                    embedding_dim=self.embedding_dim,
+                    diffusion_type=diffusion_type,
+                    K=K,
+                    ridge=ridge,
+                    hidden_dim=hidden_dim,
+                    mf_dim=mf_dim,
+                    n_layers=n_layers,
+                    epochs=epochs,
+                    lr=lr,
+                    weight_decay=weight_decay,
+                    normalize_laplacian=True,
+                    random_state=self.base_seed
+                )
+                
+                # Evaluate on validation set
+                # Use centroid-based ranking
+                scores_centroid = seed_centroid_scores(embeddings, val_seeds)
+                
+                # Compute recall@50 on validation seeds
+                k = min(50, len(G) - 1)
+                top_k_indices = np.argsort(scores_centroid)[-k:]
+                
+                # Count how many validation seeds are in top-k
+                hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+                recall_at_k = hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+                
+                return recall_at_k
+                
+            except Exception as e:
+                logger.warning(f"Trial failed: {e}")
+                # Return a poor score for failed trials
+                return 0.0
+        
+        # Create Optuna study
+        sampler = TPESampler(seed=self.base_seed)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            study_name=f'gcnmf_{diffusion_type}_tuning'
+        )
+        
+        # Optimize
+        study.optimize(
+            objective,
+            n_trials=n_trials,
+            timeout=timeout,
+            n_jobs=n_jobs_optuna,
+            show_progress_bar=True
+        )
+        
+        # Get results
+        best_params = study.best_params
+        best_value = study.best_value
+        
+        logger.info(f"Tuning complete!")
+        logger.info(f"Best validation recall@50: {best_value:.4f}")
+        logger.info(f"Best hyperparameters: {best_params}")
+        
+        return {
+            'best_params': best_params,
+            'best_value': best_value,
+            'study': study,
+            'trials_df': study.trials_dataframe(),
+            'method': f'{diffusion_type}gcnmf'
+        }
+    
+    def tune_node2vec_hyperparameters(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        n_trials: int = 50,
+        timeout: int = 1800,
+        n_jobs_optuna: int = 1
+    ) -> Dict:
+        """
+        Tune Node2Vec hyperparameters using Bayesian optimization (Optuna).
+        
+        Optimizes walk parameters (p, q, walk_length, num_walks, window) for
+        best validation ranking performance.
+        
+        Parameters
+        ----------
+        G : nx.Graph
+            Input graph
+        seeds : list
+            Seed nodes for evaluation
+        targets : list
+            Target nodes for evaluation
+        n_trials : int
+            Number of optimization trials (default: 50)
+        timeout : int
+            Maximum time in seconds (default: 1800 = 30 minutes)
+        n_jobs_optuna : int
+            Number of parallel jobs for Optuna (default: 1)
+            
+        Returns
+        -------
+        dict
+            Dictionary with best_params, best_value, study, trials_df
+        """
+        if not OPTUNA_AVAILABLE:
+            raise ImportError("Optuna is required. Install with: pip install optuna")
+        
+        logger.info("Starting hyperparameter tuning for Node2Vec")
+        logger.info(f"Trials: {n_trials}, Timeout: {timeout}s")
+        
+        # Create train/val split
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        
+        logger.info(f"Train seeds: {len(train_seeds)}, Val seeds: {len(val_seeds)}")
+        
+        nodes = list(G.nodes())
+        
+        def objective(trial):
+            """Optuna objective for Node2Vec."""
+            # Suggest hyperparameters
+            p = trial.suggest_float('p', 0.25, 4.0)
+            q = trial.suggest_float('q', 0.25, 4.0)
+            walk_length = trial.suggest_int('walk_length', 10, 80, step=10)
+            num_walks = trial.suggest_int('num_walks', 10, 100, step=10)
+            window = trial.suggest_int('window', 3, 10)
+            
+            try:
+                # Generate embedding
+                embedding = run_node2vec(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    walk_length=walk_length,
+                    num_walks=num_walks,
+                    p=p,
+                    q=q,
+                    window=window,
+                    min_count=1,
+                    workers=1,
+                    seed=self.base_seed
+                )
+                
+                # Evaluate on validation set
+                scores_centroid = seed_centroid_scores(embedding, val_seeds)
+                k = min(50, len(G) - 1)
+                top_k_indices = np.argsort(scores_centroid)[-k:]
+                hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+                recall_at_k = hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+                
+                return recall_at_k
+                
+            except Exception as e:
+                logger.warning(f"Trial failed: {e}")
+                return 0.0
+        
+        # Create and run study
+        sampler = TPESampler(seed=self.base_seed)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            study_name='node2vec_tuning'
+        )
+        
+        study.optimize(
+            objective,
+            n_trials=n_trials,
+            timeout=timeout,
+            n_jobs=n_jobs_optuna,
+            show_progress_bar=True
+        )
+        
+        logger.info(f"Tuning complete!")
+        logger.info(f"Best validation recall@50: {study.best_value:.4f}")
+        logger.info(f"Best hyperparameters: {study.best_params}")
+        
+        return {
+            'best_params': study.best_params,
+            'best_value': study.best_value,
+            'study': study,
+            'trials_df': study.trials_dataframe(),
+            'method': 'node2vec'
+        }
+    
+    def tune_netmf_hyperparameters(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        n_trials: int = 30,
+        timeout: int = 1800,
+        n_jobs_optuna: int = 1
+    ) -> Dict:
+        """
+        Tune NetMF hyperparameters using Bayesian optimization (Optuna).
+        
+        Optimizes window_size, negative samples, and rank for best
+        validation ranking performance.
+        
+        Parameters
+        ----------
+        G : nx.Graph
+            Input graph
+        seeds : list
+            Seed nodes for evaluation
+        targets : list
+            Target nodes for evaluation
+        n_trials : int
+            Number of optimization trials (default: 30)
+        timeout : int
+            Maximum time in seconds (default: 1800 = 30 minutes)
+        n_jobs_optuna : int
+            Number of parallel jobs for Optuna (default: 1)
+            
+        Returns
+        -------
+        dict
+            Dictionary with best_params, best_value, study, trials_df
+        """
+        if not OPTUNA_AVAILABLE:
+            raise ImportError("Optuna is required. Install with: pip install optuna")
+        
+        logger.info("Starting hyperparameter tuning for NetMF")
+        logger.info(f"Trials: {n_trials}, Timeout: {timeout}s")
+        
+        # Create train/val split
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        
+        logger.info(f"Train seeds: {len(train_seeds)}, Val seeds: {len(val_seeds)}")
+        
+        nodes = list(G.nodes())
+        
+        def objective(trial):
+            """Optuna objective for NetMF."""
+            # Suggest hyperparameters
+            window_size = trial.suggest_int('window_size', 5, 20)
+            negative = trial.suggest_int('negative', 1, 10)
+            # rank can be None (auto) or a specific value
+            use_auto_rank = trial.suggest_categorical('use_auto_rank', [True, False])
+            if use_auto_rank:
+                rank = None
+            else:
+                rank = trial.suggest_int('rank', 64, 512, step=64)
+            
+            try:
+                # Generate embedding
+                embedding = run_netmf(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    window_size=window_size,
+                    negative=negative,
+                    rank=rank,
+                    use_svd=True,
+                    seed=self.base_seed
+                )
+                
+                # Evaluate on validation set
+                scores_centroid = seed_centroid_scores(embedding, val_seeds)
+                k = min(50, len(G) - 1)
+                top_k_indices = np.argsort(scores_centroid)[-k:]
+                hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+                recall_at_k = hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+                
+                return recall_at_k
+                
+            except Exception as e:
+                logger.warning(f"Trial failed: {e}")
+                return 0.0
+        
+        # Create and run study
+        sampler = TPESampler(seed=self.base_seed)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            study_name='netmf_tuning'
+        )
+        
+        study.optimize(
+            objective,
+            n_trials=n_trials,
+            timeout=timeout,
+            n_jobs=n_jobs_optuna,
+            show_progress_bar=True
+        )
+        
+        logger.info(f"Tuning complete!")
+        logger.info(f"Best validation recall@50: {study.best_value:.4f}")
+        logger.info(f"Best hyperparameters: {study.best_params}")
+        
+        return {
+            'best_params': study.best_params,
+            'best_value': study.best_value,
+            'study': study,
+            'trials_df': study.trials_dataframe(),
+            'method': 'netmf'
+        }
+    
+        
+    def tune_qcaliber_gcnmf_hyperparameters(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        diffusion_type: str = 'heat',  # 'heat' or 'poly'
+        n_trials: int = 50,
+        timeout: Optional[int] = None
+    ) -> Dict:
+        """
+        Tune hyperparameters for Q-Caliber GCN-MF methods using Bayesian optimization.
+        
+        Args:
+            G: NetworkX graph
+            seeds: Seed nodes
+            targets: Target nodes for evaluation
+            diffusion_type: 'heat' for hgcnmf or 'poly' for pgcnmf
+            n_trials: Number of optimization trials
+            timeout: Timeout in seconds
+            
+        Returns:
+            Dictionary with best parameters and study results
+        """
+        if not OPTUNA_AVAILABLE:
+            logger.warning("Optuna not available. Skipping hyperparameter tuning.")
+            return None
+        
+        logger.info(f"Tuning Q-Caliber GCN-MF ({diffusion_type}) hyperparameters with {n_trials} trials...")
+        
+        # Create train/val split for seeds (80/20) BEFORE generating quantum targets
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)  # 20% for validation
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        
+        logger.info(f"Train seeds: {len(train_seeds)}, Val seeds: {len(val_seeds)}")
+        
+        # Generate quantum targets using ONLY train seeds (no data leakage)
+        q_targets = self._generate_quantum_targets(G, train_seeds)
+        
+        def objective(trial):
+            # Suggest hyperparameters
+            if diffusion_type == 'poly':
+                K = trial.suggest_int('K', 2, 6)
+                ridge = trial.suggest_float('ridge', 1e-8, 1e-4, log=True)
+            else:
+                K = None
+                ridge = None
+            
+            hidden_dim = trial.suggest_categorical('hidden_dim', [64, 128, 256])
+            mf_dim = trial.suggest_categorical('mf_dim', [32, 64, 128])
+            n_layers = trial.suggest_int('n_layers', 1, 3)
+            epochs = trial.suggest_int('epochs', 100, 300, step=50)
+            lr = trial.suggest_float('lr', 1e-3, 1e-1, log=True)
+            weight_decay = trial.suggest_float('weight_decay', 1e-5, 1e-3, log=True)
+            
+            try:
+                # Generate embedding
+                from quvine.baselines.gcn_mf import generate_quvine_gcnmf_embedding
+                
+                embeddings, _ = generate_quvine_gcnmf_embedding(
+                    G=G,
+                    q_targets=q_targets,
+                    embedding_dim=self.embedding_dim,
+                    diffusion_type=diffusion_type,
+                    K=K,
+                    ridge=ridge,
+                    hidden_dim=hidden_dim,
+                    mf_dim=mf_dim,
+                    n_layers=n_layers,
+                    epochs=epochs,
+                    lr=lr,
+                    weight_decay=weight_decay,
+                    normalize_laplacian=True,
+                    random_state=self.base_seed
+                )
+                
+                # Evaluate on validation set only (no data leakage)
+                # Use centroid-based ranking with validation seeds
+                scores_centroid = seed_centroid_scores(embeddings, val_seeds)
+                
+                # Compute recall@50 on validation seeds
+                k = min(50, len(G) - 1)
+                top_k_indices = np.argsort(scores_centroid)[-k:]
+                
+                # Count how many validation seeds are in top-k
+                hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+                recall_at_k = hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+                
+                return recall_at_k
+                
+            except Exception as e:
+                logger.warning(f"Trial failed: {e}")
+                return 0.0
+        
+        # Create study
+        sampler = TPESampler(seed=self.base_seed)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            study_name=f'qcaliber_gcnmf_{diffusion_type}_tuning'
+        )
+        
+        # Optimize
+        study.optimize(objective, n_trials=n_trials, timeout=timeout, show_progress_bar=True)
+        
+        logger.info(f"Tuning complete!")
+        logger.info(f"Best validation recall@50: {study.best_value:.4f}")
+        logger.info(f"Best hyperparameters: {study.best_params}")
+        
+        return {
+            'best_params': study.best_params,
+            'best_value': study.best_value,
+            'study': study,
+            'trials_df': study.trials_dataframe(),
+            'method': f'{diffusion_type}gcnmf'
+        }
+    
+    
+    def tune_quantum_walk_hyperparameters(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        walk_type: str = 'rwr',  # 'rwr', 'ctqw', or 'dtqw'
+        n_trials: int = 50,
+        timeout: Optional[int] = None
+    ) -> Dict:
+        """
+        Tune hyperparameters for quantum walk methods using Bayesian optimization.
+        
+        Args:
+            G: NetworkX graph
+            seeds: Seed nodes
+            targets: Target nodes for evaluation
+            walk_type: Type of quantum walk ('rwr', 'ctqw', or 'dtqw')
+            n_trials: Number of optimization trials
+            timeout: Timeout in seconds
+            
+        Returns:
+            Dictionary with best parameters and study results
+        """
+        if not OPTUNA_AVAILABLE:
+            logger.warning("Optuna not available. Skipping hyperparameter tuning.")
+            return None
+        
+        logger.info(f"Tuning {walk_type.upper()} hyperparameters with {n_trials} trials...")
+        
+        # Create train/val split for seeds (80/20) to prevent data leakage
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)  # 20% for validation
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        
+        logger.info(f"Train seeds: {len(train_seeds)}, Val seeds: {len(val_seeds)}")
+        
+        def objective(trial):
+            # Common parameters for all walk types
+            num_walks = trial.suggest_int('num_walks', 5, 20)
+            walk_length = trial.suggest_int('walk_length', 5, 15)
+            num_views = trial.suggest_int('num_views', 2, 5)
+            
+            # Walk-specific parameters
+            if walk_type == 'rwr':
+                restart_prob = trial.suggest_float('restart_prob', 0.1, 0.3)
+                max_iter = trial.suggest_int('max_iter', 500, 1500, step=250)
+                walk_params = {
+                    'restart_prob': restart_prob,
+                    'max_iter': max_iter
+                }
+            elif walk_type == 'ctqw':
+                time = trial.suggest_float('time', 0.5, 2.0)
+                walk_params = {
+                    'time': time
+                }
+            elif walk_type == 'dtqw':
+                steps = trial.suggest_int('steps', 5, 25, step=5)
+                coin = trial.suggest_categorical('coin', ['grover', 'hadamard'])
+                walk_params = {
+                    'steps': steps,
+                    'coin': coin
+                }
+            else:
+                raise ValueError(f"Unknown walk type: {walk_type}")
+            
+            try:
+                # Create config
+                cfg = self._get_default_quvine_config()
+                cfg.walks.kinds = [walk_type]
+                cfg.walks.num_walks = num_walks
+                cfg.walks.walk_length = walk_length
+                cfg.views.num_views = num_views
+                
+                # Update walk-specific parameters
+                for key, value in walk_params.items():
+                    OmegaConf.update(cfg.walks, key, value)
+                
+                # Generate embedding
+                embeddings = self._run_quvine_walks(G, cfg)
+                
+                if walk_type not in embeddings or embeddings[walk_type] is None:
+                    return 0.0
+                
+                embedding = embeddings[walk_type]
+                
+                # Evaluate on validation set only (no data leakage)
+                # Use centroid-based ranking with validation seeds
+                scores_centroid = seed_centroid_scores(embedding, val_seeds)
+                
+                # Compute recall@50 on validation seeds
+                k = min(50, len(G) - 1)
+                top_k_indices = np.argsort(scores_centroid)[-k:]
+                
+                # Count how many validation seeds are in top-k
+                hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+                recall_at_k = hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+                
+                return recall_at_k
+                
+            except Exception as e:
+                logger.warning(f"Trial failed: {e}")
+                return 0.0
+        
+        # Create study
+        sampler = TPESampler(seed=self.base_seed)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            study_name=f'{walk_type}_tuning'
+        )
+        
+        # Optimize
+        study.optimize(objective, n_trials=n_trials, timeout=timeout, show_progress_bar=True)
+        
+        logger.info(f"Tuning complete!")
+        logger.info(f"Best validation recall@50: {study.best_value:.4f}")
+        logger.info(f"Best hyperparameters: {study.best_params}")
+        
+        return {
+            'best_params': study.best_params,
+            'best_value': study.best_value,
+            'study': study,
+            'trials_df': study.trials_dataframe(),
+            'method': walk_type
+        }
     
     def run_embedding_method(
         self,
@@ -421,7 +1087,8 @@ class ComprehensiveEmbeddingAnalysis:
         G: nx.Graph,
         seeds: List[int],
         targets: List[int],
-        cfg: Optional[DictConfig] = None
+        cfg: Optional[DictConfig] = None,
+        network_id: Optional[str] = None
     ) -> np.ndarray:
         """
         Run a specific embedding method.
@@ -440,6 +1107,8 @@ class ComprehensiveEmbeddingAnalysis:
             Target nodes
         cfg : DictConfig, optional
             Configuration for QuVINE methods
+        network_id : str, optional
+            Network identifier for accessing tuned hyperparameters
             
         Returns
         -------
@@ -449,29 +1118,63 @@ class ComprehensiveEmbeddingAnalysis:
         nodes = list(G.nodes())
         
         if method_name == 'netmf':
-            return run_netmf(
-                graph=G,
-                nodes=nodes,
-                dimensions=self.embedding_dim,
-                window_size=10,
-                negative=1,
-                seed=self.base_seed
-            )
+            # Use tuned hyperparameters if available
+            if network_id and network_id in self.tuned_hyperparameters and 'netmf' in self.tuned_hyperparameters[network_id]:
+                tuned_params = self.tuned_hyperparameters[network_id]['netmf']
+                logger.info(f"Using tuned NetMF hyperparameters for {network_id}: {tuned_params}")
+                return run_netmf(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    window_size=tuned_params['window_size'],
+                    negative=tuned_params['negative'],
+                    rank=tuned_params.get('rank'),  # Optional parameter
+                    seed=self.base_seed
+                )
+            else:
+                # Use default hyperparameters
+                return run_netmf(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    window_size=10,
+                    negative=1,
+                    seed=self.base_seed
+                )
         
         elif method_name == 'node2vec':
-            return run_node2vec(
-                graph=G,
-                nodes=nodes,
-                dimensions=self.embedding_dim,
-                walk_length=10,
-                num_walks=10,
-                p=1.0,
-                q=0.5,
-                window=5,
-                min_count=1,
-                workers=4,
-                seed=self.base_seed
-            )
+            # Use tuned hyperparameters if available
+            if network_id and network_id in self.tuned_hyperparameters and 'node2vec' in self.tuned_hyperparameters[network_id]:
+                tuned_params = self.tuned_hyperparameters[network_id]['node2vec']
+                logger.info(f"Using tuned Node2Vec hyperparameters for {network_id}: {tuned_params}")
+                return run_node2vec(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    walk_length=tuned_params['walk_length'],
+                    num_walks=tuned_params['num_walks'],
+                    p=tuned_params['p'],
+                    q=tuned_params['q'],
+                    window=tuned_params['window'],
+                    min_count=1,
+                    workers=4,
+                    seed=self.base_seed
+                )
+            else:
+                # Use default hyperparameters
+                return run_node2vec(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    walk_length=10,
+                    num_walks=10,
+                    p=1.0,
+                    q=0.5,
+                    window=5,
+                    min_count=1,
+                    workers=4,
+                    seed=self.base_seed
+                )
         
         elif method_name == 'baseline_gcnmf':
             # Baseline GCN-MF without quantum calibration
@@ -590,7 +1293,8 @@ class ComprehensiveEmbeddingAnalysis:
                         G=G,
                         seeds=seeds,
                         targets=targets,
-                        cfg=cfg
+                        cfg=cfg,
+                        network_id=network_id
                     )
                     store.add(method, emb)
                     logger.info(f"  Added {method} embedding: shape {emb.shape}")
@@ -647,38 +1351,67 @@ class ComprehensiveEmbeddingAnalysis:
             
             if method_name == 'quvine_hgcnmf':
                 # Heat kernel + GCN-MF
-                # Note: hidden_dim is the final embedding dimension in GCN-MF
+                # Use tuned hyperparameters if available, otherwise use defaults
+                if self.tuned_hyperparameters['hgcnmf'] is not None:
+                    params = self.tuned_hyperparameters['hgcnmf']
+                    logger.info(f"Using tuned hyperparameters for hgcnmf: {params}")
+                else:
+                    params = {
+                        'hidden_dim': self.embedding_dim,
+                        'mf_dim': self.embedding_dim // 2,
+                        'n_layers': 2,
+                        'epochs': 200,
+                        'lr': 0.01,
+                        'weight_decay': 5e-4
+                    }
+                
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
                     q_targets=q_targets,
                     embedding_dim=self.embedding_dim,
                     diffusion_type='heat',
-                    hidden_dim=self.embedding_dim,  # Use embedding_dim as hidden_dim for consistency
-                    mf_dim=self.embedding_dim // 2,  # MF dimension is half of embedding_dim
-                    n_layers=2,
-                    epochs=200,
-                    lr=0.01,
-                    weight_decay=5e-4,
+                    hidden_dim=params.get('hidden_dim', self.embedding_dim),
+                    mf_dim=params.get('mf_dim', self.embedding_dim // 2),
+                    n_layers=params.get('n_layers', 2),
+                    epochs=params.get('epochs', 200),
+                    lr=params.get('lr', 0.01),
+                    weight_decay=params.get('weight_decay', 5e-4),
                     normalize_laplacian=True,
                     random_state=self.base_seed
                 )
                 return embeddings
+                
             elif method_name == 'quvine_pgcnmf':
                 # Polynomial filter + GCN-MF
-                # Note: hidden_dim is the final embedding dimension in GCN-MF
+                # Use tuned hyperparameters if available, otherwise use defaults
+                if self.tuned_hyperparameters['pgcnmf'] is not None:
+                    params = self.tuned_hyperparameters['pgcnmf']
+                    logger.info(f"Using tuned hyperparameters for pgcnmf: {params}")
+                else:
+                    params = {
+                        'K': 4,
+                        'ridge': 1e-6,
+                        'hidden_dim': self.embedding_dim,
+                        'mf_dim': self.embedding_dim // 2,
+                        'n_layers': 2,
+                        'epochs': 200,
+                        'lr': 0.01,
+                        'weight_decay': 5e-4
+                    }
+                
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
                     q_targets=q_targets,
                     embedding_dim=self.embedding_dim,
                     diffusion_type='poly',
-                    K=4,
-                    ridge=1e-6,
-                    hidden_dim=self.embedding_dim,  # Use embedding_dim as hidden_dim for consistency
-                    mf_dim=self.embedding_dim // 2,  # MF dimension is half of embedding_dim
-                    n_layers=2,
-                    epochs=200,
-                    lr=0.01,
-                    weight_decay=5e-4,
+                    K=params.get('K', 4),
+                    ridge=params.get('ridge', 1e-6),
+                    hidden_dim=params.get('hidden_dim', self.embedding_dim),
+                    mf_dim=params.get('mf_dim', self.embedding_dim // 2),
+                    n_layers=params.get('n_layers', 2),
+                    epochs=params.get('epochs', 200),
+                    lr=params.get('lr', 0.01),
+                    weight_decay=params.get('weight_decay', 5e-4),
                     normalize_laplacian=True,
                     random_state=self.base_seed
                 )
@@ -792,8 +1525,14 @@ class ComprehensiveEmbeddingAnalysis:
         cfg = OmegaConf.create({
             'walks': {
                 'kinds': ['rwr'],
+                'num_walks': 10,
                 'num_walks_per_root': 10,
                 'walk_length': 10,
+                'restart_prob': 0.15,
+                'time': 1.0,
+                'steps': 10,
+                'max_iter': 1000,
+                'coin': 'grover',
                 'rwr': {'alpha': 0.15},
                 'ctqw': {'t': 1.0},
                 'dtqw': {'steps': 10}
@@ -804,6 +1543,9 @@ class ComprehensiveEmbeddingAnalysis:
                 'view_size': 50,
                 'max_nodes': 200,
                 'max_edges': 1000,
+                'max_degree': 100,
+                'degree_norm': False,
+                'degree_alpha': 0.5,
                 'strategy': 'random'
             },
             'train': {
@@ -848,7 +1590,9 @@ class ComprehensiveEmbeddingAnalysis:
                 
                 for walk_kind, walks in walk_outputs.items():
                     if len(walks) > 0:
-                        corpus_builders[walk_kind].add(root, walks)
+                        # Convert integer node IDs to strings for corpus builder
+                        walks_str = [[str(node) for node in walk] for walk in walks]
+                        corpus_builders[walk_kind].add(root, walks_str)
         
         # Build corpora and train embeddings
         embeddings = {}
@@ -1077,7 +1821,8 @@ class ComprehensiveEmbeddingAnalysis:
             'quvine_fused_hybrid',                                 # Hybrid fusion
             'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
             'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
-            'netmf', 'node2vec'                                    # Baselines
+            'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
+            'netmf', 'node2vec'                                    # Other baselines
         ]
         
         ranking_results = []
@@ -1089,7 +1834,7 @@ class ComprehensiveEmbeddingAnalysis:
         for method in methods:
             try:
                 # Generate embedding
-                embedding = self.run_embedding_method(method, G, seeds, targets)
+                embedding = self.run_embedding_method(method, G, seeds, targets, network_id=network_id)
                 
                 # 1. Evaluate ranking (original task)
                 ranking_result = self.evaluate_embedding(
@@ -1141,7 +1886,8 @@ class ComprehensiveEmbeddingAnalysis:
             'quvine_fused_hybrid',                                 # Hybrid fusion
             'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
             'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
-            'netmf', 'node2vec'                                    # Baselines
+            'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
+            'netmf', 'node2vec'                                    # Other baselines
         ]
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")

@@ -514,8 +514,10 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     if normalize_laplacian:
         # Normalized Laplacian: D^(-1/2) L D^(-1/2)
         D = np.array(L.sum(axis=1)).flatten()
-        D_inv_sqrt = np.power(D, -0.5)
-        D_inv_sqrt[np.isinf(D_inv_sqrt)] = 0.0
+        # Add small epsilon to avoid division by zero for isolated nodes
+        D_safe = np.where(D > 0, D, 1.0)  # Replace zeros with 1.0
+        D_inv_sqrt = np.power(D_safe, -0.5)
+        D_inv_sqrt = np.where(D > 0, D_inv_sqrt, 0.0)  # Set isolated nodes to 0
         D_inv_sqrt_mat = sp.diags(D_inv_sqrt)
         L = D_inv_sqrt_mat @ L @ D_inv_sqrt_mat
     
@@ -601,6 +603,34 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     # Train to reconstruct adjacency matrix from embeddings
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
+    # Pre-sample balanced edges and non-edges for training
+    edges = list(G.edges())
+    n_edges = len(edges)
+    n_samples_per_class = min(500, n_edges)  # Sample 500 positive and 500 negative
+    
+    # Sample positive edges (actual edges in graph)
+    pos_edge_indices = np.random.choice(n_edges, size=n_samples_per_class, replace=False)
+    pos_edges = [edges[i] for i in pos_edge_indices]
+    
+    # Sample negative edges (non-edges)
+    neg_edges = []
+    attempts = 0
+    max_attempts = n_samples_per_class * 10
+    while len(neg_edges) < n_samples_per_class and attempts < max_attempts:
+        u = np.random.randint(0, N)
+        v = np.random.randint(0, N)
+        if u != v and not G.has_edge(node_list[u], node_list[v]):
+            neg_edges.append((u, v))
+        attempts += 1
+    
+    # Combine positive and negative samples
+    all_edges = [(node_to_idx[u], node_to_idx[v]) for u, v in pos_edges] + neg_edges
+    all_labels = [1.0] * len(pos_edges) + [0.0] * len(neg_edges)
+    
+    # Convert to tensors
+    edge_indices_train = torch.LongTensor(all_edges).t()  # Shape: (2, n_samples)
+    true_adj_train = torch.FloatTensor(all_labels)
+    
     model.train()
     for epoch in range(epochs):
         optimizer.zero_grad()
@@ -608,23 +638,11 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
         # Get embeddings
         embeddings = model.get_embeddings(X_diffused_torch, adj_torch)
         
-        # Reconstruction loss: ||A - Z Z^T||^2
-        # Sample edges for efficiency
-        n_samples = min(1000, N * N // 10)
-        edge_indices = torch.randint(0, N, (2, n_samples))
-        
-        # Compute similarity scores
-        scores = (embeddings[edge_indices[0]] * embeddings[edge_indices[1]]).sum(dim=1)
-        
-        # Get true adjacency values
-        true_adj = torch.zeros(n_samples)
-        for i in range(n_samples):
-            u, v = edge_indices[0, i].item(), edge_indices[1, i].item()
-            if G.has_edge(node_list[u], node_list[v]):
-                true_adj[i] = 1.0
+        # Compute similarity scores for sampled edges
+        scores = (embeddings[edge_indices_train[0]] * embeddings[edge_indices_train[1]]).sum(dim=1)
         
         # Binary cross-entropy loss
-        loss = F.binary_cross_entropy_with_logits(scores, true_adj)
+        loss = F.binary_cross_entropy_with_logits(scores, true_adj_train)
         
         loss.backward()
         optimizer.step()
@@ -769,6 +787,34 @@ def generate_baseline_gcnmf_embedding(
     
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
+    # Pre-sample balanced edges and non-edges for training
+    edges = list(G.edges())
+    n_edges = len(edges)
+    n_samples_per_class = min(500, n_edges)  # Sample 500 positive and 500 negative
+    
+    # Sample positive edges (actual edges in graph)
+    pos_edge_indices = np.random.choice(n_edges, size=n_samples_per_class, replace=False)
+    pos_edges = [edges[i] for i in pos_edge_indices]
+    
+    # Sample negative edges (non-edges)
+    neg_edges = []
+    attempts = 0
+    max_attempts = n_samples_per_class * 10
+    while len(neg_edges) < n_samples_per_class and attempts < max_attempts:
+        u = np.random.randint(0, N)
+        v = np.random.randint(0, N)
+        if u != v and not G.has_edge(u, v):
+            neg_edges.append((u, v))
+        attempts += 1
+    
+    # Combine positive and negative samples
+    all_edges = pos_edges + neg_edges
+    all_labels = [1.0] * len(pos_edges) + [0.0] * len(neg_edges)
+    
+    # Convert to tensors
+    edge_indices_train = torch.LongTensor(all_edges).t()  # Shape: (2, n_samples)
+    true_adj_train = torch.FloatTensor(all_labels)
+    
     # Training loop
     model.train()
     for epoch in range(epochs):
@@ -780,29 +826,11 @@ def generate_baseline_gcnmf_embedding(
         # Unsupervised loss: reconstruct adjacency matrix
         embeddings = model.get_embeddings(X_torch, A_norm_torch)
         
-        # Sample edges for efficiency
-        edges = list(G.edges())
-        if len(edges) > 1000:
-            sampled_edges = np.random.choice(len(edges), 1000, replace=False)
-            edges = [edges[i] for i in sampled_edges]
+        # Compute similarity scores for sampled edges
+        scores = (embeddings[edge_indices_train[0]] * embeddings[edge_indices_train[1]]).sum(dim=1)
         
-        # Compute reconstruction loss
-        loss = 0.0
-        for u, v in edges:
-            sim = torch.dot(embeddings[u], embeddings[v])
-            loss += F.binary_cross_entropy_with_logits(sim, torch.tensor(1.0))
-        
-        # Add negative samples
-        non_edges = list(nx.non_edges(G))
-        if len(non_edges) > 1000:
-            sampled_non_edges = np.random.choice(len(non_edges), 1000, replace=False)
-            non_edges = [non_edges[i] for i in sampled_non_edges]
-        
-        for u, v in non_edges:
-            sim = torch.dot(embeddings[u], embeddings[v])
-            loss += F.binary_cross_entropy_with_logits(sim, torch.tensor(0.0))
-        
-        loss = loss / (len(edges) + len(non_edges))
+        # Binary cross-entropy loss
+        loss = F.binary_cross_entropy_with_logits(scores, true_adj_train)
         
         # Backward pass
         loss.backward()
