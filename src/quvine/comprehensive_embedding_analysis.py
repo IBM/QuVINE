@@ -1068,11 +1068,16 @@ class ComprehensiveEmbeddingAnalysis:
         """
         network_id, G, seeds, targets = network_tuple
         methods = [
-            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',  # Original quantum walks
-            'quvine_heat', 'quvine_poly',                 # Q-Caliber filters
-            'quvine_hgcnmf', 'quvine_pgcnmf',            # Q-Caliber GCN-MF
-            'quvine_fused',                               # Fused embedding
-            'netmf', 'node2vec'                           # Baselines
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',           # Original quantum walks
+            'quvine_heat', 'quvine_poly',                          # Q-Caliber filters
+            'quvine_hgcnmf', 'quvine_pgcnmf',                     # Q-Caliber GCN-MF
+            'quvine_fused_svd',                                    # SVD fusion
+            'quvine_fused_graphreg',                               # Graph-regularized fusion
+            'quvine_fused_attention',                              # Attention fusion
+            'quvine_fused_hybrid',                                 # Hybrid fusion
+            'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
+            'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
+            'netmf', 'node2vec'                                    # Baselines
         ]
         
         ranking_results = []
@@ -1127,11 +1132,16 @@ class ComprehensiveEmbeddingAnalysis:
         Evaluates multiple downstream tasks: ranking, classification, link prediction.
         """
         methods = [
-            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',  # Original quantum walks
-            'quvine_heat', 'quvine_poly',                 # Q-Caliber filters
-            'quvine_hgcnmf', 'quvine_pgcnmf',            # Q-Caliber GCN-MF
-            'quvine_fused',                               # Fused embedding
-            'netmf', 'node2vec'                           # Baselines
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',           # Original quantum walks
+            'quvine_heat', 'quvine_poly',                          # Q-Caliber filters
+            'quvine_hgcnmf', 'quvine_pgcnmf',                     # Q-Caliber GCN-MF
+            'quvine_fused_svd',                                    # SVD fusion
+            'quvine_fused_graphreg',                               # Graph-regularized fusion
+            'quvine_fused_attention',                              # Attention fusion
+            'quvine_fused_hybrid',                                 # Hybrid fusion
+            'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
+            'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
+            'netmf', 'node2vec'                                    # Baselines
         ]
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")
@@ -1242,6 +1252,14 @@ class ComprehensiveEmbeddingAnalysis:
                         valid_data = method_df[[complexity_metric, perf_metric]].dropna()
                         
                         if len(valid_data) > 3:
+                            # Check for constant values (std == 0) to avoid warnings
+                            complexity_std = valid_data[complexity_metric].std()
+                            perf_std = valid_data[perf_metric].std()
+                            
+                            # Skip if either variable is constant
+                            if complexity_std == 0 or perf_std == 0:
+                                continue
+                            
                             try:
                                 pearson_corr, pearson_p = pearsonr(
                                     valid_data[complexity_metric],
