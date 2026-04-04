@@ -802,6 +802,8 @@ class ComprehensiveEmbeddingAnalysis:
                 'enabled': True,
                 'num_views': 3,
                 'view_size': 50,
+                'max_nodes': 200,
+                'max_edges': 1000,
                 'strategy': 'random'
             },
             'train': {
@@ -1065,7 +1067,13 @@ class ComprehensiveEmbeddingAnalysis:
             (ranking_results, classification_results, link_prediction_results)
         """
         network_id, G, seeds, targets = network_tuple
-        methods = ['quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', 'netmf', 'node2vec']
+        methods = [
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',  # Original quantum walks
+            'quvine_heat', 'quvine_poly',                 # Q-Caliber filters
+            'quvine_hgcnmf', 'quvine_pgcnmf',            # Q-Caliber GCN-MF
+            'quvine_fused',                               # Fused embedding
+            'netmf', 'node2vec'                           # Baselines
+        ]
         
         ranking_results = []
         classification_results = []
@@ -1118,7 +1126,13 @@ class ComprehensiveEmbeddingAnalysis:
         Networks are processed in parallel, with each network running all methods.
         Evaluates multiple downstream tasks: ranking, classification, link prediction.
         """
-        methods = ['quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused', 'netmf', 'node2vec']
+        methods = [
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',  # Original quantum walks
+            'quvine_heat', 'quvine_poly',                 # Q-Caliber filters
+            'quvine_hgcnmf', 'quvine_pgcnmf',            # Q-Caliber GCN-MF
+            'quvine_fused',                               # Fused embedding
+            'netmf', 'node2vec'                           # Baselines
+        ]
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")
         logger.info(f"Downstream tasks: ranking=True, classification={include_classification}, link_prediction={include_link_prediction}")
