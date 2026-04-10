@@ -213,14 +213,12 @@ def calibrate_polynomial_filter(
         basis.append(v[node_indices])
         
         for _ in range(1, K + 1):
-            if sp.issparse(L):
-                v = L @ v
-            else:
-                v = L @ v
+            v = L @ v
             basis.append(np.asarray(v)[node_indices])
         
         # Stack basis vectors: Phi is |S| x (K+1)
         Phi = np.stack(basis, axis=1)
+        Phi = Phi / (np.linalg.norm(Phi, axis=0, keepdims=True) + 1e-12)  # Normalize columns
         b = pQ
         
         # Accumulate normal equations: A^T A and A^T b
@@ -304,10 +302,7 @@ def apply_polynomial_filter(
     V = X.copy()
     
     for k in range(1, len(coeffs)):
-        if sp.issparse(L):
-            V = L @ V
-        else:
-            V = L @ V
+        V = L @ V
         Z = Z + coeffs[k] * V
     
     return np.asarray(Z)
@@ -497,5 +492,3 @@ def generate_baseline_filter_embedding(
         raise ValueError(f"Unknown filter type: {filter_type}")
     
     return Z
-
-# Made with Bob

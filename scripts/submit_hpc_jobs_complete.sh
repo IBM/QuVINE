@@ -31,23 +31,28 @@
 
 set -e  # Exit on error
 
+# ---------------------------------------------------------------------------
 # Default parameters
-N_NETWORKS=20
+# ---------------------------------------------------------------------------
+N_NETWORKS=40
 N_NODES=200
 OUTPUT_DIR="outputs/hpc_results"
 QUEUE="normal"
 WALLTIME="4:00"
-MEMORY="16"
+MEMORY="8"
 METHODS="all"
 DRY_RUN=false
 PYTHON_ENV="venv_quvine/bin/python"
+ALL_NETWORK_TYPES=false   # set by --all-networks
 
-# All available methods
+# Available embedding methods
 ALL_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter"
 QUANTUM_METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf"
 CLASSICAL_METHODS="netmf,node2vec,baseline_gcnmf,baseline_filter"
 
-# Parse command line arguments
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
         --n-networks)
@@ -86,58 +91,83 @@ while [[ $# -gt 0 ]]; do
             PYTHON_ENV="$2"
             shift 2
             ;;
+        --all-networks)
+            # Submit jobs for every network type defined in data/random_graphs.py:
+            #   scale_free, modular, erdos_renyi, watts_strogatz,
+            #   powerlaw_cluster, random_geometric, hierarchical, core_periphery
+            ALL_NETWORK_TYPES=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--n-networks NUM] [--n-nodes NUM] [--output-dir DIR] [--queue QUEUE] [--walltime TIME] [--memory MEM] [--methods METHODS] [--dry-run]"
+            echo "Usage: $0 [options]"
+            echo ""
+            echo "Options:"
+            echo "  --n-networks NUM     Networks per type            (default: 20)"
+            echo "  --n-nodes NUM        Nodes per network            (default: 200)"
+            echo "  --output-dir DIR     Output directory             (default: outputs/hpc_results)"
+            echo "  --queue QUEUE        LSF queue                    (default: normal)"
+            echo "  --walltime TIME      Per-job wall time            (default: 4:00)"
+            echo "  --memory MEM         Memory per job in GB         (default: 16)"
+            echo "  --methods METHODS    Comma-separated method list  (default: all)"
+            echo "                       Presets: all | quantum | classical"
+            echo "  --all-networks       Submit all 8 network types from random_graphs.py"
+            echo "                       (default: scale_free + modular only)"
+            echo "  --python-env PATH    Python executable path       (default: venv_quvine/bin/python)"
+            echo "  --dry-run            Print job scripts without submitting"
             exit 1
             ;;
     esac
 done
 
-# Process methods parameter
+# Resolve method preset
 case "$METHODS" in
-    all)
-        SELECTED_METHODS="$ALL_METHODS"
-        ;;
-    quantum)
-        SELECTED_METHODS="$QUANTUM_METHODS"
-        ;;
-    classical)
-        SELECTED_METHODS="$CLASSICAL_METHODS"
-        ;;
-    *)
-        SELECTED_METHODS="$METHODS"
-        ;;
+    all)      SELECTED_METHODS="$ALL_METHODS"     ;;
+    quantum)  SELECTED_METHODS="$QUANTUM_METHODS" ;;
+    classical) SELECTED_METHODS="$CLASSICAL_METHODS" ;;
+    *)        SELECTED_METHODS="$METHODS"          ;;
 esac
 
-# Get script directory
+# Determine which network types to generate
+if [ "$ALL_NETWORK_TYPES" = true ]; then
+    # All 8 types defined in data/random_graphs.py
+    NETWORK_TYPES="scale_free modular erdos_renyi watts_strogatz powerlaw_cluster random_geometric hierarchical core_periphery"
+    N_TYPES=8
+else
+    NETWORK_TYPES="scale_free modular"
+    N_TYPES=2
+fi
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 
-# Create output directories
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR/logs"
 mkdir -p "$OUTPUT_DIR/results"
 
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
+TOTAL_NETWORKS=$((N_NETWORKS * N_TYPES))
 echo "=================================="
 echo "HPC Complete Pipeline Configuration"
 echo "=================================="
-echo "Project Directory: $PROJECT_DIR"
-echo "Output Directory:  $OUTPUT_DIR"
-echo "Networks per type: $N_NETWORKS"
-echo "Nodes per network: $N_NODES"
-echo "LSF Queue:         $QUEUE"
-echo "Wall Time:         $WALLTIME"
-echo "Memory per Job:    ${MEMORY}GB"
-echo "Python Env:        $PYTHON_ENV"
-echo "Methods:           $SELECTED_METHODS"
-echo "Dry Run:           $DRY_RUN"
+echo "Project Directory : $PROJECT_DIR"
+echo "Output Directory  : $OUTPUT_DIR"
+echo "Network types     : $NETWORK_TYPES"
+echo "Networks per type : $N_NETWORKS"
+echo "Total networks    : $TOTAL_NETWORKS"
+echo "Nodes per network : $N_NODES"
+echo "LSF Queue         : $QUEUE"
+echo "Wall Time         : $WALLTIME"
+echo "Memory per Job    : ${MEMORY}GB"
+echo "Python Env        : $PYTHON_ENV"
+echo "Methods           : $SELECTED_METHODS"
+echo "Dry Run           : $DRY_RUN"
 echo "=================================="
-echo ""
-
-# Calculate total networks
-TOTAL_NETWORKS=$((N_NETWORKS * 2))  # scale-free + modular
-echo "Total networks to generate and analyze: $TOTAL_NETWORKS"
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
@@ -149,121 +179,130 @@ fi
 ANALYSIS_JOB_IDS=()
 JOB_COUNT=0
 
-# Submit scale-free network jobs
-echo "Submitting scale-free network jobs..."
-for i in $(seq 0 $((N_NETWORKS - 1))); do
-    network_id=$(printf "scale_free_%02d" $i)
-    job_output_dir="$OUTPUT_DIR/results/$network_id"
-    mkdir -p "$job_output_dir"
-    
-    job_name="quvine_${network_id}"
-    log_file="$OUTPUT_DIR/logs/${job_name}.out"
-    err_file="$OUTPUT_DIR/logs/${job_name}.err"
-    job_script="$OUTPUT_DIR/logs/${job_name}.sh"
-    
-    # Vary m parameter for diversity (2-5)
-    m=$((2 + (i % 4)))
-    seed=$((42 + i))
-    
-    cat > "$job_script" << EOF
-#!/bin/bash
-#BSUB -J ${job_name}
-#BSUB -o ${log_file}
-#BSUB -e ${err_file}
-#BSUB -q ${QUEUE}
-#BSUB -W ${WALLTIME}
-#BSUB -M ${MEMORY}GB
-#BSUB -R "rusage[mem=${MEMORY}GB]"
+# ---------------------------------------------------------------------------
+# Submit analysis jobs for each network type
+# ---------------------------------------------------------------------------
+# _submit_network_type_jobs NET_TYPE SEED_OFFSET
+# Generates N_NETWORKS jobs for the given network type.
+# Each job writes a self-contained bash/Python script and optionally submits it.
+_submit_network_type_jobs() {
+    local net_type="$1"
+    local seed_offset="$2"
 
-# Activate Python environment
-source ${PROJECT_DIR}/${PYTHON_ENV%/bin/python}/bin/activate
+    echo ""
+    echo "Submitting ${net_type} network jobs..."
 
-# Change to project directory
-cd ${PROJECT_DIR}
+    for i in $(seq 0 $((N_NETWORKS - 1))); do
+        network_id=$(printf "${net_type}_%02d" $i)
+        job_output_dir="$OUTPUT_DIR/results/$network_id"
+        mkdir -p "$job_output_dir"
 
-# Run complete analysis: generate network + analyze
-python -c "
-import sys
-sys.path.insert(0, '${PROJECT_DIR}/src')
+        job_name="quvine_${network_id}"
+        log_file="$OUTPUT_DIR/logs/${job_name}.out"
+        err_file="$OUTPUT_DIR/logs/${job_name}.err"
+        job_script="$OUTPUT_DIR/logs/${job_name}.sh"
 
+        seed=$(( seed_offset + i ))
+
+        # ------------------------------------------------------------------
+        # Build the Python network-generation snippet for this type.
+        # We use a bash variable PY_GEN that is interpolated into the heredoc.
+        # ------------------------------------------------------------------
+        case "$net_type" in
+            scale_free)
+                local m=$(( 2 + (i % 4) ))
+                PY_GEN="
 from quvine.data.random_graphs import generate_barabasi_albert
-from quvine.comprehensive_embedding_analysis import run_single_network_analysis
-import networkx as nx
-
-# Generate scale-free network
-print('Generating scale-free network: ${network_id}')
+print('Generating scale_free network: ${network_id}')
 print('Parameters: n=${N_NODES}, m=${m}, seed=${seed}')
 G = generate_barabasi_albert(n=${N_NODES}, m=${m}, seed=${seed})
-
-# Ensure connected
-if not nx.is_connected(G):
-    largest_cc = max(nx.connected_components(G), key=len)
-    G = G.subgraph(largest_cc).copy()
-
-print(f'Network generated: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
-
-# Metadata
-metadata = {
-    'type': 'scale_free',
-    'n_nodes': ${N_NODES},
-    'm': ${m},
-    'seed': ${seed},
-    'network_id': '${network_id}'
-}
-
-# Run complete analysis
-results = run_single_network_analysis(
-    G=G,
-    network_id='${network_id}',
-    network_metadata=metadata,
-    output_dir='${job_output_dir}',
-    embedding_methods='${SELECTED_METHODS}'.split(','),
-    verbose=True
-)
-
-print(f'Analysis complete for ${network_id}')
+metadata = {'type': 'scale_free', 'n_nodes': ${N_NODES}, 'm': ${m}, 'seed': ${seed}, 'network_id': '${network_id}'}
 "
+                ;;
+            modular)
+                local num_communities=$(( 3 + (i % 5) ))
+                PY_GEN="
+from quvine.data.random_graphs import generate_modular_network
+import numpy as np
+rng = np.random.default_rng(${seed})
+num_communities = ${num_communities}
+nodes_per_community = ${N_NODES} // num_communities
+p_intra = 0.3 + float(rng.uniform(-0.1, 0.1))
+p_inter = 0.01 + float(rng.uniform(-0.005, 0.005))
+print(f'Generating modular network: ${network_id} (communities={num_communities}, p_intra={p_intra:.3f}, p_inter={p_inter:.4f})')
+G, _ = generate_modular_network(num_communities=num_communities, nodes_per_community=nodes_per_community, p_intra=p_intra, p_inter=p_inter, seed=${seed})
+metadata = {'type': 'modular', 'n_nodes': ${N_NODES}, 'num_communities': num_communities, 'p_intra': float(p_intra), 'p_inter': float(p_inter), 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            erdos_renyi)
+                # p from 0.05 to 0.14 across the N_NETWORKS instances
+                PY_GEN="
+from quvine.data.random_graphs import generate_erdos_renyi
+p = 0.05 + (${i} % 10) * 0.01
+print(f'Generating erdos_renyi network: ${network_id} (n=${N_NODES}, p={p:.3f}, seed=${seed})')
+G = generate_erdos_renyi(n=${N_NODES}, p=p, seed=${seed})
+metadata = {'type': 'erdos_renyi', 'n_nodes': ${N_NODES}, 'p': p, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            watts_strogatz)
+                local k=$(( 4 + (i % 6) * 2 ))   # k in {4,6,8,10,12,14}
+                PY_GEN="
+from quvine.data.random_graphs import generate_watts_strogatz
+p_rewire = 0.1 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.4
+print(f'Generating watts_strogatz network: ${network_id} (n=${N_NODES}, k=${k}, p={p_rewire:.3f}, seed=${seed})')
+G = generate_watts_strogatz(n=${N_NODES}, k=${k}, p=p_rewire, seed=${seed})
+metadata = {'type': 'watts_strogatz', 'n_nodes': ${N_NODES}, 'k': ${k}, 'p_rewire': p_rewire, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            powerlaw_cluster)
+                local m_plc=$(( 2 + (i % 4) ))
+                PY_GEN="
+from quvine.data.random_graphs import generate_powerlaw_cluster
+p_tri = 0.1 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.3
+print(f'Generating powerlaw_cluster network: ${network_id} (n=${N_NODES}, m=${m_plc}, p={p_tri:.3f}, seed=${seed})')
+G = generate_powerlaw_cluster(n=${N_NODES}, m=${m_plc}, p=p_tri, seed=${seed})
+metadata = {'type': 'powerlaw_cluster', 'n_nodes': ${N_NODES}, 'm': ${m_plc}, 'p_tri': p_tri, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            random_geometric)
+                PY_GEN="
+from quvine.data.random_graphs import generate_random_geometric
+radius = 0.10 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.15
+print(f'Generating random_geometric network: ${network_id} (n=${N_NODES}, radius={radius:.3f}, seed=${seed})')
+G = generate_random_geometric(n=${N_NODES}, radius=radius, seed=${seed})
+metadata = {'type': 'random_geometric', 'n_nodes': ${N_NODES}, 'radius': radius, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            hierarchical)
+                local levels=$(( 4 + (i % 3) ))
+                local bf=$(( 2 + (i % 3) ))
+                PY_GEN="
+from quvine.data.random_graphs import generate_hierarchical_network
+p_lvl = 0.01 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.09
+print(f'Generating hierarchical network: ${network_id} (levels=${levels}, bf=${bf}, p_level={p_lvl:.3f}, seed=${seed})')
+G, _ = generate_hierarchical_network(levels=${levels}, branching_factor=${bf}, p_level=p_lvl, seed=${seed})
+metadata = {'type': 'hierarchical', 'levels': ${levels}, 'branching_factor': ${bf}, 'p_level': p_lvl, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            core_periphery)
+                PY_GEN="
+from quvine.data.random_graphs import generate_core_periphery
+n_core = max(10, int(${N_NODES} * (0.1 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.2)))
+n_periphery = ${N_NODES} - n_core
+p_core = 0.5 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.4
+p_cp   = 0.05 + (${i} / max(${N_NETWORKS} - 1, 1)) * 0.10
+print(f'Generating core_periphery network: ${network_id} (n_core={n_core}, n_periphery={n_periphery}, p_core={p_core:.2f}, seed=${seed})')
+G, _, _ = generate_core_periphery(n_core=n_core, n_periphery=n_periphery, p_core=p_core, p_core_periphery=p_cp, seed=${seed})
+metadata = {'type': 'core_periphery', 'n_core': n_core, 'n_periphery': n_periphery, 'p_core': p_core, 'p_cp': p_cp, 'seed': ${seed}, 'network_id': '${network_id}'}
+"
+                ;;
+            *)
+                echo "  WARNING: Unknown network type '${net_type}' — skipping"
+                continue
+                ;;
+        esac
 
-exit \$?
-EOF
-    
-    chmod +x "$job_script"
-    
-    # Submit job
-    if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY RUN] Would submit: bsub < $job_script"
-    else
-        job_id=$(bsub < "$job_script" 2>&1 | grep -oP 'Job <\K[0-9]+')
-        if [ -n "$job_id" ]; then
-            echo "  Submitted job $job_id: $job_name"
-            ANALYSIS_JOB_IDS+=("$job_id")
-            JOB_COUNT=$((JOB_COUNT + 1))
-        else
-            echo "  ERROR: Failed to submit job for $network_id"
-        fi
-    fi
-done
-
-# Submit modular network jobs
-echo ""
-echo "Submitting modular network jobs..."
-for i in $(seq 0 $((N_NETWORKS - 1))); do
-    network_id=$(printf "modular_%02d" $i)
-    job_output_dir="$OUTPUT_DIR/results/$network_id"
-    mkdir -p "$job_output_dir"
-    
-    job_name="quvine_${network_id}"
-    log_file="$OUTPUT_DIR/logs/${job_name}.out"
-    err_file="$OUTPUT_DIR/logs/${job_name}.err"
-    job_script="$OUTPUT_DIR/logs/${job_name}.sh"
-    
-    # Vary modularity parameters
-    num_communities=$((3 + (i % 5)))  # 3-7 communities
-    p_intra_base=0.3
-    p_inter_base=0.01
-    seed=$((1042 + i))
-    
-    cat > "$job_script" << EOF
+        cat > "$job_script" << EOF
 #!/bin/bash
 #BSUB -J ${job_name}
 #BSUB -o ${log_file}
@@ -273,94 +312,62 @@ for i in $(seq 0 $((N_NETWORKS - 1))); do
 #BSUB -M ${MEMORY}GB
 #BSUB -R "rusage[mem=${MEMORY}GB]"
 
-# Activate Python environment
 source ${PROJECT_DIR}/${PYTHON_ENV%/bin/python}/bin/activate
-
-# Change to project directory
 cd ${PROJECT_DIR}
 
-# Run complete analysis: generate network + analyze
 python -c "
 import sys
 sys.path.insert(0, '${PROJECT_DIR}/src')
-
-from quvine.data.random_graphs import generate_modular_network
-from quvine.comprehensive_embedding_analysis import run_single_network_analysis
 import networkx as nx
-import numpy as np
 
-# Set seed for reproducibility
-np.random.seed(${seed})
-rng = np.random.default_rng(${seed})
+${PY_GEN}
 
-# Generate modular network
-print('Generating modular network: ${network_id}')
-num_communities = ${num_communities}
-nodes_per_community = ${N_NODES} // num_communities
-p_intra = ${p_intra_base} + rng.uniform(-0.1, 0.1)
-p_inter = ${p_inter_base} + rng.uniform(-0.005, 0.005)
-
-print(f'Parameters: communities={num_communities}, nodes_per_comm={nodes_per_community}')
-print(f'            p_intra={p_intra:.3f}, p_inter={p_inter:.4f}, seed=${seed}')
-
-G, communities = generate_modular_network(
-    num_communities=num_communities,
-    nodes_per_community=nodes_per_community,
-    p_intra=p_intra,
-    p_inter=p_inter,
-    seed=${seed}
-)
-
-# Ensure connected
+# Ensure graph is connected — keep largest component
 if not nx.is_connected(G):
     largest_cc = max(nx.connected_components(G), key=len)
     G = G.subgraph(largest_cc).copy()
 
-print(f'Network generated: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
+print(f'Network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
 
-# Metadata
-metadata = {
-    'type': 'modular',
-    'n_nodes': ${N_NODES},
-    'num_communities': num_communities,
-    'nodes_per_community': nodes_per_community,
-    'p_intra': float(p_intra),
-    'p_inter': float(p_inter),
-    'seed': ${seed},
-    'network_id': '${network_id}'
-}
-
-# Run complete analysis
-results = run_single_network_analysis(
+from quvine.comprehensive_embedding_analysis import run_single_network_analysis
+run_single_network_analysis(
     G=G,
     network_id='${network_id}',
     network_metadata=metadata,
     output_dir='${job_output_dir}',
     embedding_methods='${SELECTED_METHODS}'.split(','),
-    verbose=True
+    verbose=True,
 )
-
-print(f'Analysis complete for ${network_id}')
+print('Analysis complete for ${network_id}')
 "
 
 exit \$?
 EOF
-    
-    chmod +x "$job_script"
-    
-    # Submit job
-    if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY RUN] Would submit: bsub < $job_script"
-    else
-        job_id=$(bsub < "$job_script" 2>&1 | grep -oP 'Job <\K[0-9]+')
-        if [ -n "$job_id" ]; then
-            echo "  Submitted job $job_id: $job_name"
-            ANALYSIS_JOB_IDS+=("$job_id")
-            JOB_COUNT=$((JOB_COUNT + 1))
+
+        chmod +x "$job_script"
+
+        if [ "$DRY_RUN" = true ]; then
+            echo "  [DRY RUN] Would submit: bsub < $job_script"
         else
-            echo "  ERROR: Failed to submit job for $network_id"
+            job_id=$(bsub < "$job_script" 2>&1 | grep -oP 'Job <\K[0-9]+')
+            if [ -n "$job_id" ]; then
+                echo "  Submitted job $job_id: $job_name"
+                ANALYSIS_JOB_IDS+=("$job_id")
+                JOB_COUNT=$((JOB_COUNT + 1))
+            else
+                echo "  ERROR: Failed to submit job for $network_id"
+            fi
         fi
-    fi
+    done
+}
+
+# Each network type gets a distinct seed-offset band (1000 apart) so networks
+# are independently reproducible and don't share seeds across types.
+TYPE_IDX=0
+for NET_TYPE in $NETWORK_TYPES; do
+    SEED_OFFSET=$(( 42 + TYPE_IDX * 1000 ))
+    _submit_network_type_jobs "$NET_TYPE" "$SEED_OFFSET"
+    TYPE_IDX=$(( TYPE_IDX + 1 ))
 done
 
 echo ""
@@ -368,186 +375,95 @@ echo "=================================="
 echo "Analysis Jobs Submitted: $JOB_COUNT"
 echo "=================================="
 
-# Submit aggregation and visualization job (depends on all analysis jobs)
-if [ "$DRY_RUN" = false ] && [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
-    echo ""
-    echo "Submitting aggregation and visualization job..."
-    
-    # Create dependency string (proper LSF syntax)
-    DEPENDENCY_STRING=""
-    for job_id in "${ANALYSIS_JOB_IDS[@]}"; do
-        if [ -z "$DEPENDENCY_STRING" ]; then
-            DEPENDENCY_STRING="done($job_id)"
-        else
-            DEPENDENCY_STRING="$DEPENDENCY_STRING && done($job_id)"
-        fi
-    done
-    
-    agg_job_name="quvine_aggregate"
-    agg_log_file="$OUTPUT_DIR/logs/${agg_job_name}.out"
-    agg_err_file="$OUTPUT_DIR/logs/${agg_job_name}.err"
-    agg_job_script="$OUTPUT_DIR/logs/${agg_job_name}.sh"
-    
-    cat > "$agg_job_script" << 'EOF'
+# ---------------------------------------------------------------------------
+# Submit aggregation + visualization job (depends on all analysis jobs)
+# ---------------------------------------------------------------------------
+
+agg_job_name="quvine_aggregate"
+agg_job_script="$OUTPUT_DIR/logs/${agg_job_name}.sh"
+
+# Build LSF dependency string
+DEPENDENCY_STRING=""
+for job_id in "${ANALYSIS_JOB_IDS[@]}"; do
+    if [ -z "$DEPENDENCY_STRING" ]; then
+        DEPENDENCY_STRING="done($job_id)"
+    else
+        DEPENDENCY_STRING="$DEPENDENCY_STRING && done($job_id)"
+    fi
+done
+
+# Write the aggregation job script (no quoted heredoc — variables expand here)
+cat > "$agg_job_script" << EOF
 #!/bin/bash
-#BSUB -J quvine_aggregate
-#BSUB -o OUTPUT_DIR_PLACEHOLDER/logs/quvine_aggregate.out
-#BSUB -e OUTPUT_DIR_PLACEHOLDER/logs/quvine_aggregate.err
-#BSUB -q QUEUE_PLACEHOLDER
+#BSUB -J ${agg_job_name}
+#BSUB -o ${OUTPUT_DIR}/logs/${agg_job_name}.out
+#BSUB -e ${OUTPUT_DIR}/logs/${agg_job_name}.err
+#BSUB -q ${QUEUE}
 #BSUB -W 2:00
 #BSUB -M 32GB
 #BSUB -R "rusage[mem=32GB]"
-#BSUB -w "DEPENDENCY_PLACEHOLDER"
+$([ -n "$DEPENDENCY_STRING" ] && echo "#BSUB -w \"${DEPENDENCY_STRING}\"")
 
 # Activate Python environment
-source PROJECT_DIR_PLACEHOLDER/PYTHON_ENV_PLACEHOLDER/bin/activate
+source ${PROJECT_DIR}/${PYTHON_ENV%/bin/python}/bin/activate
 
 # Change to project directory
-cd PROJECT_DIR_PLACEHOLDER
+cd ${PROJECT_DIR}
 
 echo "========================================"
 echo "AGGREGATING AND VISUALIZING RESULTS"
 echo "========================================"
 
-# Step 1: Collect and aggregate all results
-python scripts/collect_hpc_results.py --results-dir OUTPUT_DIR_PLACEHOLDER/results
+# Collect, aggregate, and generate all box-plot visualizations.
+# collect_hpc_results.py handles both steps in one call.
+python scripts/collect_hpc_results.py \\
+    --results-dir ${OUTPUT_DIR}/results \\
+    --viz-dir     ${OUTPUT_DIR}/visualizations \\
+    --n-networks  ${N_NETWORKS}
 
-# Step 2: Generate visualizations and recommendations
-python -c "
-import sys
-sys.path.insert(0, 'PROJECT_DIR_PLACEHOLDER/src')
+echo "========================================"
+echo "AGGREGATION AND VISUALIZATION COMPLETE"
+echo "Results CSV : ${OUTPUT_DIR}/results/comprehensive_results.csv"
+echo "Plots       : ${OUTPUT_DIR}/visualizations/"
+echo "========================================"
 
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-
-# Load comprehensive results
-results_file = Path('OUTPUT_DIR_PLACEHOLDER/results/comprehensive_results.csv')
-df = pd.read_csv(results_file)
-
-print(f'Loaded {len(df)} rows from comprehensive results')
-print(f'Networks: {df[\"network_id\"].nunique()}')
-print(f'Methods: {df[\"method\"].nunique()}')
-
-# Create visualizations directory
-viz_dir = Path('OUTPUT_DIR_PLACEHOLDER/visualizations')
-viz_dir.mkdir(exist_ok=True)
-
-# Visualization 1: Method comparison across tasks
-print('\\nGenerating method comparison plots...')
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-# Ranking performance
-if 'ranking_precision@10' in df.columns:
-    df.boxplot(column='ranking_precision@10', by='method', ax=axes[0])
-    axes[0].set_title('Ranking: Precision@10')
-    axes[0].set_xlabel('Method')
-    axes[0].set_ylabel('Precision@10')
-
-# Classification performance
-if 'classification_mean_f1_macro' in df.columns:
-    df.boxplot(column='classification_mean_f1_macro', by='method', ax=axes[1])
-    axes[1].set_title('Classification: Mean F1 (Macro)')
-    axes[1].set_xlabel('Method')
-    axes[1].set_ylabel('F1 Score')
-
-# Link prediction performance
-if 'link_prediction_mean_auc_roc' in df.columns:
-    df.boxplot(column='link_prediction_mean_auc_roc', by='method', ax=axes[2])
-    axes[2].set_title('Link Prediction: Mean AUC-ROC')
-    axes[2].set_xlabel('Method')
-    axes[2].set_ylabel('AUC-ROC')
-
-plt.tight_layout()
-plt.savefig(viz_dir / 'method_comparison.png', dpi=300, bbox_inches='tight')
-print(f'Saved: {viz_dir / \"method_comparison.png\"}')
-
-# Visualization 2: Complexity vs Performance
-print('\\nGenerating complexity vs performance plots...')
-complexity_metrics = ['spectral_gap', 'orc_mean', 'kirchhoff_per_pair']
-performance_metrics = {
-    'ranking_precision@10': 'Ranking Precision@10',
-    'classification_mean_f1_macro': 'Classification F1',
-    'link_prediction_mean_auc_roc': 'Link Prediction AUC-ROC'
-}
-
-for perf_col, perf_label in performance_metrics.items():
-    if perf_col not in df.columns:
-        continue
-    
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    fig.suptitle(f'{perf_label} vs Complexity Metrics', fontsize=14)
-    
-    for idx, comp_metric in enumerate(complexity_metrics):
-        if comp_metric not in df.columns:
-            continue
-        
-        for method in df['method'].unique():
-            method_df = df[df['method'] == method]
-            axes[idx].scatter(method_df[comp_metric], method_df[perf_col], 
-                            label=method, alpha=0.6)
-        
-        axes[idx].set_xlabel(comp_metric)
-        axes[idx].set_ylabel(perf_label)
-        axes[idx].legend()
-        axes[idx].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    safe_name = perf_col.replace('@', '_at_').replace('/', '_')
-    plt.savefig(viz_dir / f'complexity_vs_{safe_name}.png', dpi=300, bbox_inches='tight')
-    print(f'Saved: {viz_dir / f\"complexity_vs_{safe_name}.png\"}')
-
-print('\\n========================================')
-print('AGGREGATION AND VISUALIZATION COMPLETE')
-print(f'Results: OUTPUT_DIR_PLACEHOLDER/results/comprehensive_results.csv')
-print(f'Visualizations: OUTPUT_DIR_PLACEHOLDER/visualizations/')
-print('========================================')
-"
-
-exit $?
+exit \$?
 EOF
-    
-    # Replace placeholders
-    sed -i "s|OUTPUT_DIR_PLACEHOLDER|$OUTPUT_DIR|g" "$agg_job_script"
-    sed -i "s|PROJECT_DIR_PLACEHOLDER|$PROJECT_DIR|g" "$agg_job_script"
-    sed -i "s|QUEUE_PLACEHOLDER|$QUEUE|g" "$agg_job_script"
-    sed -i "s|PYTHON_ENV_PLACEHOLDER|${PYTHON_ENV%/bin/python}|g" "$agg_job_script"
-    sed -i "s|DEPENDENCY_PLACEHOLDER|$DEPENDENCY_STRING|g" "$agg_job_script"
-    
-    chmod +x "$agg_job_script"
-    
-    # Submit aggregation job
+
+chmod +x "$agg_job_script"
+
+if [ "$DRY_RUN" = true ]; then
+    echo ""
+    echo "  [DRY RUN] Would submit aggregation job: bsub < $agg_job_script"
+    [ -n "$DEPENDENCY_STRING" ] && echo "  [DRY RUN] Dependencies: $DEPENDENCY_STRING"
+elif [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
+    echo ""
+    echo "Submitting aggregation and visualization job..."
     agg_job_id=$(bsub < "$agg_job_script" 2>&1 | grep -oP 'Job <\K[0-9]+')
     if [ -n "$agg_job_id" ]; then
         echo "  Submitted aggregation job $agg_job_id: $agg_job_name"
-        echo "  Dependencies: ${#ANALYSIS_JOB_IDS[@]} analysis jobs"
+        echo "  Depends on ${#ANALYSIS_JOB_IDS[@]} analysis jobs"
     else
         echo "  ERROR: Failed to submit aggregation job"
     fi
+else
+    echo ""
+    echo "No analysis jobs were submitted — skipping aggregation job."
 fi
 
 echo ""
 echo "=================================="
 echo "SUBMISSION COMPLETE"
 echo "=================================="
-echo "Analysis jobs: $JOB_COUNT"
+echo "Analysis jobs submitted: $JOB_COUNT"
 if [ "$DRY_RUN" = false ] && [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
-    echo "Aggregation job: 1 (will run after all analysis jobs complete)"
+    echo "Aggregation job       : 1 (runs after all analysis jobs)"
     echo ""
     echo "Monitor jobs with:"
     echo "  bjobs -u \$USER"
-    echo ""
-    echo "Check specific job:"
-    echo "  bjobs ${ANALYSIS_JOB_IDS[0]}"
-    echo ""
-    echo "View job output:"
-    echo "  bpeek ${ANALYSIS_JOB_IDS[0]}"
     echo ""
     echo "Results will be in:"
     echo "  $OUTPUT_DIR/results/comprehensive_results.csv"
     echo "  $OUTPUT_DIR/visualizations/"
 fi
 echo "=================================="
-
-# Made with Bob

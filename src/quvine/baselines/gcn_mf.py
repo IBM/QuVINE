@@ -10,9 +10,12 @@ Reference:
 - Matrix factorization approaches for biological network analysis
 """
 
+import logging
 import numpy as np
 import scipy.sparse as sp
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 try:
     import torch
@@ -28,9 +31,6 @@ class GCNLayer(nn.Module):
     
     def __init__(self, in_features, out_features, bias=True):
         super(GCNLayer, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         if bias:
             self.bias = nn.Parameter(torch.FloatTensor(out_features))
@@ -56,10 +56,8 @@ class GCNLayer(nn.Module):
         Returns:
             Output features [N, out_features]
         """
-        # Linear transformation
         support = torch.mm(x, self.weight)
-        
-        # Graph convolution
+
         if getattr(adj, "is_sparse", False):
             output = torch.sparse.mm(adj, support)
         else:
@@ -244,23 +242,18 @@ def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_
         X_np = np.array(X)
     
     if diffusion_type == 'heat' and t_star is not None:
-        # Heat kernel diffusion: exp(-t*L) X
-        print(f"Precomputing heat kernel diffusion (t={t_star})...")
+        logger.info(f"Precomputing heat kernel diffusion (t={t_star})...")
         Z_np = spla.expm_multiply((-t_star) * L, X_np)
-    
+
     elif diffusion_type == 'poly' and poly_coeffs is not None:
-        # Polynomial filter: sum_k a_k L^k X
-        print(f"Precomputing polynomial diffusion (degree={len(poly_coeffs)-1})...")
-        Z_np = poly_coeffs[0] * X_np
-        V = X_np.copy()
-        for k in range(1, len(poly_coeffs)):
-            V = L @ V
-            Z_np += poly_coeffs[k] * V
+        logger.info(f"Precomputing polynomial diffusion (degree={len(poly_coeffs)-1})...")
+        from quvine.embedding.quantum_filters import apply_polynomial_filter
+        Z_np = apply_polynomial_filter(L, X_np, poly_coeffs)
     else:
-        print("No diffusion applied (identity)")
+        logger.info("No diffusion applied (identity)")
         Z_np = X_np
-    
-    print("✓ Diffusion precomputed successfully")
+
+    logger.info("Diffusion precomputed successfully")
     return torch.from_numpy(Z_np).float()
 
 
@@ -512,14 +505,8 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     # Get Laplacian
     L = nx.laplacian_matrix(G, nodelist=node_list).astype(float)
     if normalize_laplacian:
-        # Normalized Laplacian: D^(-1/2) L D^(-1/2)
-        D = np.array(L.sum(axis=1)).flatten()
-        # Add small epsilon to avoid division by zero for isolated nodes
-        D_safe = np.where(D > 0, D, 1.0)  # Replace zeros with 1.0
-        D_inv_sqrt = np.power(D_safe, -0.5)
-        D_inv_sqrt = np.where(D > 0, D_inv_sqrt, 0.0)  # Set isolated nodes to 0
-        D_inv_sqrt_mat = sp.diags(D_inv_sqrt)
-        L = D_inv_sqrt_mat @ L @ D_inv_sqrt_mat
+        from quvine.embedding.quantum_filters import _normalize_laplacian
+        L = _normalize_laplacian(L)
     
     # Generate random features for diffusion
     X = np.random.randn(N, embedding_dim).astype(np.float32)
@@ -712,6 +699,7 @@ def generate_qcaliber_gcnmf_poly_embedding(G, q_targets, embedding_dim=128,
         diffusion_type='poly', poly_coeffs=poly_coeffs, K=K, ridge=ridge, **kwargs
     )
 
+
 def generate_baseline_gcnmf_embedding(
     G: nx.Graph,
     embedding_dim: int = 128,
@@ -819,25 +807,15 @@ def generate_baseline_gcnmf_embedding(
     model.train()
     for epoch in range(epochs):
         optimizer.zero_grad()
-        
-        # Forward pass
-        _ = model(X_torch, A_norm_torch)
-        
-        # Unsupervised loss: reconstruct adjacency matrix
+
         embeddings = model.get_embeddings(X_torch, A_norm_torch)
-        
-        # Compute similarity scores for sampled edges
         scores = (embeddings[edge_indices_train[0]] * embeddings[edge_indices_train[1]]).sum(dim=1)
-        
-        # Binary cross-entropy loss
         loss = F.binary_cross_entropy_with_logits(scores, true_adj_train)
-        
-        # Backward pass
         loss.backward()
         optimizer.step()
-        
+
         if (epoch + 1) % 50 == 0:
-            print(f"Baseline GCN-MF Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
+            logger.info(f"Baseline GCN-MF Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
     
     # Extract final embeddings
     model.eval()
@@ -904,7 +882,3 @@ def generate_baseline_filter_embedding_wrapper(
         normalize=normalize,
         random_state=random_state
     )
-
-
-
-# Made with Bob

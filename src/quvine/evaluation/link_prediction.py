@@ -28,12 +28,19 @@ Evaluation Metrics:
 import numpy as np
 import networkx as nx
 from typing import Dict, List, Tuple, Optional, Set
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import warnings
+
+
+def _make_bidi(edges) -> Set[Tuple]:
+    """Return a bidirectional (both-direction) copy of an edge collection."""
+    s = set(edges)
+    s.update((v, u) for u, v in edges)
+    return s
 
 
 def sample_negative_edges(
@@ -62,11 +69,8 @@ def sample_negative_edges(
     
     if existing_edges is None:
         existing_edges = set(G.edges())
-    
-    # Add reverse edges for undirected graphs
-    existing_edges_bidirectional = existing_edges.copy()
-    for u, v in existing_edges:
-        existing_edges_bidirectional.add((v, u))
+
+    existing_edges_bidirectional = _make_bidi(existing_edges)
     
     negative_edges = []
     
@@ -268,6 +272,95 @@ def compute_edge_features(
     return np.array(edge_features)
 
 
+def _extract_edge_endpoints(
+    embeddings: np.ndarray,
+    node_list: List,
+    edges: List[Tuple],
+    node_to_idx: dict,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (U, V) embedding matrices for valid edges."""
+    U, V = [], []
+    for u, v in edges:
+        if u not in node_to_idx or v not in node_to_idx:
+            warnings.warn(f"Edge ({u}, {v}) contains unknown node(s). Skipping.")
+            continue
+        U.append(embeddings[node_to_idx[u]])
+        V.append(embeddings[node_to_idx[v]])
+    if not U:
+        return np.empty((0, embeddings.shape[1])), np.empty((0, embeddings.shape[1]))
+    return np.array(U), np.array(V)
+
+
+def _apply_edge_method(U: np.ndarray, V: np.ndarray, method: str) -> np.ndarray:
+    """Vectorised edge feature from pre-extracted endpoint embeddings."""
+    if method == 'hadamard':
+        return U * V
+    elif method == 'average':
+        return (U + V) / 2
+    elif method == 'l1':
+        return np.abs(U - V)
+    elif method == 'l2':
+        return (U - V) ** 2
+    elif method == 'inner_product':
+        return (U * V).sum(axis=1, keepdims=True)
+    elif method == 'cosine':
+        norms = np.linalg.norm(U, axis=1, keepdims=True) * np.linalg.norm(V, axis=1, keepdims=True)
+        return np.where(norms > 0, (U * V).sum(axis=1, keepdims=True) / norms, 0.0)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+
+def _classify_and_score(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    n_pos: int,
+    n_neg: int,
+    k_values: List[int],
+    random_state: int,
+    classifier: str = 'logistic',
+) -> Dict[str, float]:
+    """Scale, train classifier, and return link prediction metrics."""
+    scaler = StandardScaler()
+    X_train_sc = scaler.fit_transform(X_train)
+    X_test_sc = scaler.transform(X_test)
+
+    if classifier == 'logistic':
+        clf = LogisticRegression(max_iter=1000, random_state=random_state)
+    elif classifier == 'random_forest':
+        clf = RandomForestClassifier(n_estimators=100, random_state=random_state)
+    else:
+        raise ValueError(f"Unknown classifier: {classifier}")
+
+    clf.fit(X_train_sc, y_train)
+    y_pred = clf.predict(X_test_sc)
+    y_scores = (clf.predict_proba(X_test_sc)[:, 1]
+                if hasattr(clf, 'predict_proba')
+                else clf.decision_function(X_test_sc))
+
+    out = {
+        'auc_roc': roc_auc_score(y_test, y_scores),
+        'auc_pr': average_precision_score(y_test, y_scores),
+        'f1': f1_score(y_test, y_pred, average='binary', zero_division=0),
+        'n_positive': n_pos,
+        'n_negative': n_neg,
+        'n_train': len(y_train),
+        'n_test': len(y_test),
+    }
+    sorted_idx = np.argsort(y_scores)[::-1]
+    y_sorted = y_test[sorted_idx]
+    for k in k_values:
+        if k <= len(y_sorted):
+            top_k = y_sorted[:k]
+            out[f'precision@{k}'] = np.sum(top_k) / k
+            out[f'recall@{k}'] = np.sum(top_k) / np.sum(y_test) if np.sum(y_test) > 0 else 0.0
+            out[f'hit@{k}'] = 1.0 if np.sum(top_k) > 0 else 0.0
+    pos_idx = np.where(y_sorted == 1)[0]
+    out['mrr'] = float(np.mean(1.0 / (pos_idx + 1))) if len(pos_idx) > 0 else 0.0
+    return out
+
+
 def evaluate_link_prediction(
     embeddings: np.ndarray,
     node_list: List[int],
@@ -277,102 +370,73 @@ def evaluate_link_prediction(
     classifier: str = 'logistic',
     k_values: List[int] = [10, 50, 100],
     test_size: float = 0.3,
-    random_state: int = 42
+    random_state: int = 42,
+    train_positive_edges: Optional[List[Tuple[int, int]]] = None,
+    train_negative_edges: Optional[List[Tuple[int, int]]] = None,
 ) -> Dict[str, float]:
     """
-    Evaluate link prediction performance with proper train/test split.
-    
+    Evaluate link prediction performance with no train-test leakage.
+
+    When *train_positive_edges* and *train_negative_edges* are provided the
+    classifier is trained on those edges and evaluated on *positive_edges* /
+    *negative_edges* (the held-out test set).  The StandardScaler is always
+    fit exclusively on the training features so that test statistics are
+    never seen during normalisation.
+
+    When train edges are omitted the function falls back to an internal
+    stratified split controlled by *test_size*.
+
     Args:
         embeddings: Node embedding matrix
         node_list: List of node IDs
-        positive_edges: List of positive (existing) edges
-        negative_edges: List of negative (non-existing) edges
+        positive_edges: Test positive (existing) edges
+        negative_edges: Test negative (non-existing) edges
         edge_feature_method: Method for computing edge features
         classifier: Classifier type ('logistic' or 'random_forest')
         k_values: K values for Precision@K and Recall@K
-        test_size: Fraction for test set
+        test_size: Fraction for internal test split (only used when train edges not provided)
         random_state: Random seed
-    
+        train_positive_edges: Training positive edges (prevents leakage)
+        train_negative_edges: Training negative edges (prevents leakage)
+
     Returns:
         Dictionary of evaluation metrics
     """
-    # Compute edge features
     pos_features = compute_edge_features(embeddings, node_list, positive_edges, edge_feature_method)
     neg_features = compute_edge_features(embeddings, node_list, negative_edges, edge_feature_method)
-    
+
     if len(pos_features) == 0 or len(neg_features) == 0:
         warnings.warn("No valid edge features computed. Skipping evaluation.")
-        return {
-            'error': 'no_valid_features',
-            'auc_roc': 0.0,
-            'auc_pr': 0.0,
-            'n_positive': 0,
-            'n_negative': 0
-        }
-    
-    # Prepare data
-    X = np.vstack([pos_features, neg_features])
-    y = np.array([1] * len(pos_features) + [0] * len(neg_features))
-    
-    # Train-test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        return {'error': 'no_valid_features', 'auc_roc': 0.0, 'auc_pr': 0.0,
+                'f1': 0.0, 'n_positive': 0, 'n_negative': 0}
+
+    X_test_all = np.vstack([pos_features, neg_features])
+    y_test_all = np.repeat([1, 0], [len(pos_features), len(neg_features)])
+
+    if train_positive_edges is not None and train_negative_edges is not None:
+        train_pos_feat = compute_edge_features(embeddings, node_list, train_positive_edges, edge_feature_method)
+        train_neg_feat = compute_edge_features(embeddings, node_list, train_negative_edges, edge_feature_method)
+        if len(train_pos_feat) > 0 and len(train_neg_feat) > 0:
+            X_train = np.vstack([train_pos_feat, train_neg_feat])
+            y_train = np.repeat([1, 0], [len(train_pos_feat), len(train_neg_feat)])
+            X_test, y_test = X_test_all, y_test_all
+        else:
+            warnings.warn("Train edge features empty; falling back to internal split.")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_test_all, y_test_all, test_size=test_size,
+                random_state=random_state, stratify=y_test_all,
+            )
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_test_all, y_test_all, test_size=test_size,
+            random_state=random_state, stratify=y_test_all,
+        )
+
+    return _classify_and_score(
+        X_train, y_train, X_test, y_test,
+        n_pos=len(pos_features), n_neg=len(neg_features),
+        k_values=k_values, random_state=random_state, classifier=classifier,
     )
-    
-    # FIX: Prevent data leakage - fit scaler only on training data
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)  # Use transform, not fit_transform
-    
-    # Train classifier
-    if classifier == 'logistic':
-        clf = LogisticRegression(max_iter=1000, random_state=random_state)
-    elif classifier == 'random_forest':
-        clf = RandomForestClassifier(n_estimators=100, random_state=random_state)
-    else:
-        raise ValueError(f"Unknown classifier: {classifier}")
-    
-    clf.fit(X_train_scaled, y_train)
-    
-    # Get prediction scores on test set
-    if hasattr(clf, 'predict_proba'):
-        y_scores = clf.predict_proba(X_test_scaled)[:, 1]
-    else:
-        y_scores = clf.decision_function(X_test_scaled)
-    
-    # Compute metrics
-    results = {
-        'auc_roc': roc_auc_score(y_test, y_scores),
-        'auc_pr': average_precision_score(y_test, y_scores),
-        'n_positive': len(pos_features),
-        'n_negative': len(neg_features),
-        'n_train': len(y_train),
-        'n_test': len(y_test)
-    }
-    
-    # Compute Precision@K and Recall@K
-    sorted_indices = np.argsort(y_scores)[::-1]  # Sort by score (descending)
-    y_sorted = y_test[sorted_indices]
-    
-    for k in k_values:
-        if k <= len(y_sorted):
-            top_k = y_sorted[:k]
-            precision_at_k = np.sum(top_k) / k
-            recall_at_k = np.sum(top_k) / np.sum(y_test) if np.sum(y_test) > 0 else 0.0
-            
-            results[f'precision@{k}'] = precision_at_k
-            results[f'recall@{k}'] = recall_at_k
-            results[f'hit@{k}'] = 1.0 if np.sum(top_k) > 0 else 0.0
-    
-    # Compute MRR (Mean Reciprocal Rank)
-    positive_indices = np.where(y_sorted == 1)[0]
-    if len(positive_indices) > 0:
-        reciprocal_ranks = 1.0 / (positive_indices + 1)
-        results['mrr'] = np.mean(reciprocal_ranks)
-    else:
-        results['mrr'] = 0.0
-    
-    return results
 
 
 def evaluate_link_prediction_cv(
@@ -429,43 +493,75 @@ def evaluate_all_edge_feature_methods(
     positive_edges: List[Tuple[int, int]],
     negative_edges: List[Tuple[int, int]],
     k_values: List[int] = [10, 50, 100],
-    random_state: int = 42
+    random_state: int = 42,
+    train_positive_edges: Optional[List[Tuple[int, int]]] = None,
+    train_negative_edges: Optional[List[Tuple[int, int]]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """
     Evaluate link prediction using all edge feature methods.
-    
+
     Args:
         embeddings: Node embedding matrix
         node_list: List of node IDs
-        positive_edges: List of positive edges
-        negative_edges: List of negative edges
+        positive_edges: Test positive edges
+        negative_edges: Test negative edges
         k_values: K values for metrics
         random_state: Random seed
-    
+        train_positive_edges: Training positive edges (no leakage when provided)
+        train_negative_edges: Training negative edges (no leakage when provided)
+
     Returns:
         Dictionary mapping method names to evaluation results
     """
+    # Pre-extract endpoint embeddings once for each edge set (avoids rebuilding
+    # node_to_idx and re-indexing embeddings for every one of the 6 methods).
+    node_to_idx = {node: idx for idx, node in enumerate(node_list)}
+    U_pos, V_pos = _extract_edge_endpoints(embeddings, node_list, positive_edges, node_to_idx)
+    U_neg, V_neg = _extract_edge_endpoints(embeddings, node_list, negative_edges, node_to_idx)
+
+    _empty_result = {'error': 'no_valid_features', 'auc_roc': 0.0, 'auc_pr': 0.0,
+                     'f1': 0.0, 'n_positive': 0, 'n_negative': 0}
+    if len(U_pos) == 0 or len(U_neg) == 0:
+        return {m: _empty_result for m in ['hadamard', 'average', 'l1', 'l2', 'inner_product', 'cosine']}
+
+    have_train = train_positive_edges is not None and train_negative_edges is not None
+    if have_train:
+        U_tp, V_tp = _extract_edge_endpoints(embeddings, node_list, train_positive_edges, node_to_idx)
+        U_tn, V_tn = _extract_edge_endpoints(embeddings, node_list, train_negative_edges, node_to_idx)
+        have_train = len(U_tp) > 0 and len(U_tn) > 0
+        if not have_train:
+            warnings.warn("Train edge features empty; falling back to internal split.")
+
+    y_test_all = np.repeat([1, 0], [len(U_pos), len(U_neg)])
+    y_train_fixed = np.repeat([1, 0], [len(U_tp), len(U_tn)]) if have_train else None
+
     results = {}
-    
-    # Include all methods including new ones
-    methods = ['hadamard', 'average', 'l1', 'l2', 'inner_product', 'cosine']
-    
-    for method in methods:
+    for method in ['hadamard', 'average', 'l1', 'l2', 'inner_product', 'cosine']:
         try:
-            eval_results = evaluate_link_prediction(
-                embeddings=embeddings,
-                node_list=node_list,
-                positive_edges=positive_edges,
-                negative_edges=negative_edges,
-                edge_feature_method=method,
-                k_values=k_values,
-                random_state=random_state
+            X_test_all = np.vstack([
+                _apply_edge_method(U_pos, V_pos, method),
+                _apply_edge_method(U_neg, V_neg, method),
+            ])
+            if have_train:
+                X_train = np.vstack([
+                    _apply_edge_method(U_tp, V_tp, method),
+                    _apply_edge_method(U_tn, V_tn, method),
+                ])
+                X_tr, y_tr, X_te, y_te = X_train, y_train_fixed, X_test_all, y_test_all
+            else:
+                X_tr, X_te, y_tr, y_te = train_test_split(
+                    X_test_all, y_test_all, test_size=0.3,
+                    random_state=random_state, stratify=y_test_all,
+                )
+            results[method] = _classify_and_score(
+                X_tr, y_tr, X_te, y_te,
+                n_pos=len(U_pos), n_neg=len(U_neg),
+                k_values=k_values, random_state=random_state,
             )
-            results[method] = eval_results
         except Exception as e:
             warnings.warn(f"Link prediction with {method} failed: {e}")
             results[method] = {'error': str(e)}
-    
+
     return results
 
 

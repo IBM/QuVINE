@@ -1,0 +1,175 @@
+{
+  "QW1_modular_strong": {
+    "network_type": "modular_strong",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "modular",
+    "seed_offset": 1000,
+    "params": {
+      "num_communities": 5,
+      "p_intra": 0.35,
+      "p_inter": 0.005
+    }
+  },
+  "QW2_modular_medium": {
+    "network_type": "modular_medium",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "modular",
+    "seed_offset": 2000,
+    "params": {
+      "num_communities": 5,
+      "p_intra": 0.20,
+      "p_inter": 0.02
+    }
+  },
+  "QW3_scale_free_2hop": {
+    "network_type": "scale_free",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "quantum",
+    "generator": "barabasi_albert",
+    "seed_offset": 3000,
+    "params": {
+      "m": 2
+    }
+  },
+  "QW4_scale_free_comm": {
+    "network_type": "scale_free",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "barabasi_albert",
+    "seed_offset": 4000,
+    "params": {
+      "m": 2
+    }
+  },
+  "QW5_core_periphery": {
+    "network_type": "core_periphery",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "quantum",
+    "generator": "core_periphery",
+    "seed_offset": 5000,
+    "params": {
+      "n_core_fraction": 0.125,
+      "p_core": 0.70,
+      "p_core_periphery": 0.05
+    }
+  },
+  "QW6_ws_low_p": {
+    "network_type": "watts_strogatz_low_p",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "quantum",
+    "generator": "watts_strogatz",
+    "seed_offset": 6000,
+    "params": {
+      "k": 6,
+      "p_rewire": 0.02
+    }
+  },
+  "QW7_modular_many_comm": {
+    "network_type": "modular_many_communities",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "modular",
+    "seed_offset": 10000,
+    "params": {
+      "num_communities": 10,
+      "p_intra": 0.30,
+      "p_inter": 0.003
+    }
+  },
+  "QW8_sbm_assortative": {
+    "network_type": "stochastic_block_model",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "stochastic_block_model",
+    "seed_offset": 11000,
+    "params": {
+      "n_blocks": 5,
+      "p_in": 0.25,
+      "p_out": 0.01
+    }
+  },
+  "QW9_powerlaw_cluster": {
+    "network_type": "powerlaw_cluster",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "quantum",
+    "generator": "powerlaw_cluster",
+    "seed_offset": 12000,
+    "params": {
+      "m": 3,
+      "p_triangle": 0.50
+    }
+  },
+  "NC1_erdos_renyi_rand": {
+    "network_type": "erdos_renyi",
+    "negative_strategy": "random",
+    "expected_winner": "classical",
+    "generator": "erdos_renyi",
+    "seed_offset": 7000,
+    "params": {
+      "p": 0.06
+    }
+  },
+  "NC2_erdos_renyi_2hop": {
+    "network_type": "erdos_renyi",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "classical",
+    "generator": "erdos_renyi",
+    "seed_offset": 8000,
+    "params": {
+      "p": 0.06
+    }
+  },
+  "NC3_ws_high_p": {
+    "network_type": "watts_strogatz_high_p",
+    "negative_strategy": "hard_2hop",
+    "expected_winner": "classical",
+    "generator": "watts_strogatz",
+    "seed_offset": 9000,
+    "params": {
+      "k": 6,
+      "p_rewire": 0.40
+    }
+  },
+  "NC4_random_geometric": {
+    "network_type": "random_geometric",
+    "negative_strategy": "random",
+    "expected_winner": "classical",
+    "generator": "random_geometric",
+    "seed_offset": 13000,
+    "params": {
+      "radius": 0.14
+    }
+  },
+  "RN1_karate_club": {
+    "network_type": "real_karate",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "real_network",
+    "seed_offset": 14000,
+    "params": {
+      "name": "karate_club"
+    }
+  },
+  "RN2_les_miserables": {
+    "network_type": "real_lesmis",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "real_network",
+    "seed_offset": 15000,
+    "params": {
+      "name": "les_miserables"
+    }
+  },
+  "RN3_polbooks": {
+    "network_type": "real_polbooks",
+    "negative_strategy": "same_community",
+    "expected_winner": "quantum",
+    "generator": "real_network",
+    "seed_offset": 16000,
+    "params": {
+      "name": "polbooks"
+    }
+  }
+}

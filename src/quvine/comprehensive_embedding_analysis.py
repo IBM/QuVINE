@@ -60,13 +60,17 @@ from quvine.evaluation.ranking import (
 )
 from quvine.evaluation.classification import (
     evaluate_all_label_strategies,
-    summarize_classification_results
+    summarize_classification_results,
+    flatten_classification_results,
+    evaluate_nc_stratified,
 )
 from quvine.evaluation.link_prediction import (
     evaluate_link_prediction_cv,
     evaluate_all_edge_feature_methods,
     summarize_link_prediction_results,
-    split_edges
+    split_edges,
+    sample_negative_edges,
+    _make_bidi,
 )
 from quvine.embedding.quantum_filters import (
     generate_quvine_heat_embedding, 
@@ -84,6 +88,10 @@ from quvine.embedding.registry import EmbeddingStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Metric columns written into each tidy link-prediction row.
+_LP_METRIC_KEYS = ['auc_roc', 'auc_pr', 'f1', 'mrr',
+                   'n_positive', 'n_negative', 'n_train', 'n_test']
 
 
 class ComprehensiveEmbeddingAnalysis:
@@ -1088,7 +1096,8 @@ class ComprehensiveEmbeddingAnalysis:
         seeds: List[int],
         targets: List[int],
         cfg: Optional[DictConfig] = None,
-        network_id: Optional[str] = None
+        network_id: Optional[str] = None,
+        method_hyperparams: Optional[Dict] = None,
     ) -> np.ndarray:
         """
         Run a specific embedding method.
@@ -1118,8 +1127,19 @@ class ComprehensiveEmbeddingAnalysis:
         nodes = list(G.nodes())
         
         if method_name == 'netmf':
-            # Use tuned hyperparameters if available
-            if network_id and network_id in self.tuned_hyperparameters and 'netmf' in self.tuned_hyperparameters[network_id]:
+            # Priority: method_hyperparams > tuned_hyperparameters > defaults
+            if method_hyperparams and 'netmf' in method_hyperparams:
+                hp = method_hyperparams['netmf']
+                logger.info(f"Using best-tuned NetMF hyperparameters: {hp}")
+                return run_netmf(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=hp.get('dimensions', self.embedding_dim),
+                    window_size=hp.get('window_size', 10),
+                    negative=hp.get('negative', 1),
+                    seed=self.base_seed
+                )
+            elif network_id and network_id in self.tuned_hyperparameters and 'netmf' in self.tuned_hyperparameters[network_id]:
                 tuned_params = self.tuned_hyperparameters[network_id]['netmf']
                 logger.info(f"Using tuned NetMF hyperparameters for {network_id}: {tuned_params}")
                 return run_netmf(
@@ -1128,11 +1148,10 @@ class ComprehensiveEmbeddingAnalysis:
                     dimensions=self.embedding_dim,
                     window_size=tuned_params['window_size'],
                     negative=tuned_params['negative'],
-                    rank=tuned_params.get('rank'),  # Optional parameter
+                    rank=tuned_params.get('rank'),
                     seed=self.base_seed
                 )
             else:
-                # Use default hyperparameters
                 return run_netmf(
                     graph=G,
                     nodes=nodes,
@@ -1143,8 +1162,24 @@ class ComprehensiveEmbeddingAnalysis:
                 )
         
         elif method_name == 'node2vec':
-            # Use tuned hyperparameters if available
-            if network_id and network_id in self.tuned_hyperparameters and 'node2vec' in self.tuned_hyperparameters[network_id]:
+            # Priority: method_hyperparams > tuned_hyperparameters > defaults
+            if method_hyperparams and 'node2vec' in method_hyperparams:
+                hp = method_hyperparams['node2vec']
+                logger.info(f"Using best-tuned Node2Vec hyperparameters: {hp}")
+                return run_node2vec(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=hp.get('dimensions', self.embedding_dim),
+                    walk_length=hp.get('walk_length', 10),
+                    num_walks=hp.get('num_walks', 10),
+                    p=hp.get('p', 1.0),
+                    q=hp.get('q', 0.5),
+                    window=hp.get('window', 5),
+                    min_count=1,
+                    workers=4,
+                    seed=self.base_seed
+                )
+            elif network_id and network_id in self.tuned_hyperparameters and 'node2vec' in self.tuned_hyperparameters[network_id]:
                 tuned_params = self.tuned_hyperparameters[network_id]['node2vec']
                 logger.info(f"Using tuned Node2Vec hyperparameters for {network_id}: {tuned_params}")
                 return run_node2vec(
@@ -1161,7 +1196,6 @@ class ComprehensiveEmbeddingAnalysis:
                     seed=self.base_seed
                 )
             else:
-                # Use default hyperparameters
                 return run_node2vec(
                     graph=G,
                     nodes=nodes,
@@ -1176,111 +1210,189 @@ class ComprehensiveEmbeddingAnalysis:
                     seed=self.base_seed
                 )
         
-        elif method_name == 'baseline_gcnmf':
-            # Baseline GCN-MF without quantum calibration
+        elif method_name == 'graphsage':
+            from quvine.baselines.graphsage import run_graphsage
+            if method_hyperparams and 'graphsage' in method_hyperparams:
+                hp = method_hyperparams['graphsage']
+                logger.info(f"Using best-tuned GraphSAGE hyperparameters: {hp}")
+                return run_graphsage(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=hp.get('dimensions', self.embedding_dim),
+                    hidden_dim=hp.get('hidden_dim', min(256, self.embedding_dim * 2)),
+                    n_layers=hp.get('n_layers', 2),
+                    epochs=hp.get('epochs', 50),
+                    lr=hp.get('lr', 0.01),
+                    neg_samples=hp.get('neg_samples', 5),
+                    seed=self.base_seed,
+                )
+            else:
+                return run_graphsage(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    hidden_dim=min(256, self.embedding_dim * 2),
+                    n_layers=2,
+                    epochs=50,
+                    lr=0.01,
+                    neg_samples=5,
+                    seed=self.base_seed,
+                )
 
-            return generate_baseline_gcnmf_embedding(
-                G=G,
-                embedding_dim=self.embedding_dim,
-                hidden_dim=64,
-                mf_dim=64,
-                n_layers=2,
-                epochs=200,
-                lr=0.01,
-                weight_decay=5e-4,
-                random_state=self.base_seed
-            )
-        
+        elif method_name == 'baseline_gcnmf':
+            if method_hyperparams and 'baseline_gcnmf' in method_hyperparams:
+                hp = method_hyperparams['baseline_gcnmf']
+                logger.info(f"Using best-tuned baseline_gcnmf hyperparameters: {hp}")
+                return generate_baseline_gcnmf_embedding(
+                    G=G,
+                    embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                    hidden_dim=hp.get('hidden_dim', 64),
+                    mf_dim=hp.get('mf_dim', 64),
+                    n_layers=hp.get('n_layers', 2),
+                    epochs=hp.get('epochs', 200),
+                    lr=hp.get('lr', 0.01),
+                    weight_decay=hp.get('weight_decay', 5e-4),
+                    random_state=self.base_seed
+                )
+            else:
+                return generate_baseline_gcnmf_embedding(
+                    G=G,
+                    embedding_dim=self.embedding_dim,
+                    hidden_dim=64,
+                    mf_dim=64,
+                    n_layers=2,
+                    epochs=200,
+                    lr=0.01,
+                    weight_decay=5e-4,
+                    random_state=self.base_seed
+                )
+
         elif method_name == 'baseline_filter':
-            # Baseline graph filter without quantum calibration (heat kernel)
-            return generate_baseline_filter_embedding(
-                G=G,
-                filter_type='heat',
-                t=1.0,
-                embedding_dim=self.embedding_dim,
-                normalize=True,
-                random_state=self.base_seed
-            )
+            if method_hyperparams and 'baseline_filter_heat' in method_hyperparams:
+                hp = method_hyperparams['baseline_filter_heat']
+                logger.info(f"Using best-tuned baseline_filter hyperparameters: {hp}")
+                return generate_baseline_filter_embedding(
+                    G=G,
+                    filter_type=hp.get('filter_type', 'heat'),
+                    t=hp.get('t', 1.0),
+                    embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                    normalize=hp.get('normalize', True),
+                    random_state=self.base_seed
+                )
+            else:
+                return generate_baseline_filter_embedding(
+                    G=G,
+                    filter_type='heat',
+                    t=1.0,
+                    embedding_dim=self.embedding_dim,
+                    normalize=True,
+                    random_state=self.base_seed
+                )
         
         elif method_name in [f'quvine_{x}' for x in ['rwr', 'ctqw', 'dtqw']]:
             # QuVINE walk-based methods
             if cfg is None:
                 cfg = self._get_default_quvine_config()
-            
+            if method_hyperparams and 'quvine_walks' in method_hyperparams:
+                hp = method_hyperparams['quvine_walks']
+                logger.info(f"Using best-tuned quvine_walks hyperparameters: {hp}")
+                cfg.walks.num_walks = hp.get('num_walks', cfg.walks.num_walks)
+                cfg.walks.num_walks_per_root = hp.get('num_walks', cfg.walks.num_walks_per_root)
+                cfg.walks.walk_length = hp.get('walk_length', cfg.walks.walk_length)
+                cfg.walks.restart_prob = hp.get('restart_prob', cfg.walks.restart_prob)
+                cfg.walks.steps = hp.get('steps', cfg.walks.steps)
+                cfg.walks.time = hp.get('time', cfg.walks.time)
+                cfg.views.num_views = hp.get('num_views', cfg.views.num_views)
+                cfg.views.max_nodes = hp.get('max_nodes', cfg.views.max_nodes)
+                cfg.views.max_edges = hp.get('max_edges', cfg.views.max_edges)
+                cfg.views.max_degree = hp.get('max_degree', cfg.views.max_degree)
+                cfg.views.degree_alpha = hp.get('degree_alpha', cfg.views.degree_alpha)
+                cfg.train.embedding_dim = hp.get('embedding_dim', cfg.train.embedding_dim)
+                cfg.train.window = hp.get('window', cfg.train.window)
+                cfg.train.negative = hp.get('negative', cfg.train.negative)
+                cfg.train.epochs = hp.get('epochs', cfg.train.epochs)
             # Set walk type
             cfg.walks.kinds = [method_name.split("_")[1]]
-            
+
             # Run QuVINE pipeline for this method
             embeddings = self._run_quvine_walks(G, cfg)
-            
+
             # Return single embedding
             return list(embeddings.values())[0]
         
         elif method_name.startswith('quvine_fused'):
-            # Fused embedding of any subset of QuVINE methods
-            # Format options:
-            #   quvine_fused                          -> all methods, svd fusion
-            #   quvine_fused_svd                      -> all methods, svd fusion
-            #   quvine_fused_graphreg                 -> all methods, graphreg fusion
-            #   quvine_fused_attention                -> all methods, attention fusion
-            #   quvine_fused_hybrid                   -> all methods, hybrid fusion
-            #   quvine_fused_svd_shared_priv          -> 2 methods, svd shared/private (attention gate)
-            #   quvine_fused_svd_shared_priv_moe      -> 2 methods, svd shared/private (mixture of experts)
-            #   quvine_fused_svd_ctqw_heat            -> ctqw+heat, svd fusion
-            #   quvine_fused_attention_rwr_poly_hgcnmf -> rwr+poly+hgcnmf, attention fusion
-            #   quvine_fused_svd_shared_priv_heat_poly -> heat+poly, svd shared/private (attention gate)
-            
-            # Parse fusion method and embedding methods
-            parts = method_name.split('_')
-            
-            # Determine fusion method
-            fusion_methods = ['svd', 'graphreg', 'attention', 'hybrid', 'svd_shared_priv']
-            fusion_method = 'svd'  # default
-            gate_type = 'attention'  # default for svd_shared_priv
-            methods_to_fuse = []
-            
-            if len(parts) == 2:  # quvine_fused - use all methods, svd fusion
-                methods_to_fuse = ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
-            elif len(parts) >= 3:
-                # Check if third part is a fusion method or part of svd_shared_priv
-                if parts[2] == 'svd' and len(parts) >= 4 and parts[3] == 'shared':
-                    # Handle svd_shared_priv fusion
-                    fusion_method = 'svd_shared_priv'
-                    # Check for gate type (moe) or embedding methods
-                    if len(parts) >= 5:
-                        if parts[4] == 'priv':
-                            # quvine_fused_svd_shared_priv or quvine_fused_svd_shared_priv_moe
-                            if len(parts) >= 6:
-                                if parts[5] == 'moe':
-                                    gate_type = 'moe'
-                                    methods_to_fuse = parts[6:] if len(parts) > 6 else ['heat', 'poly']
+            # ---------------------------------------------------------------
+            # Named semantic fusion variants (highest priority, checked first)
+            # ---------------------------------------------------------------
+            # quvine_fused-walk:
+            #   RWR + CTQW + DTQW fused with attention.  All three are
+            #   proximity-based quantum walks; attention weights each by
+            #   embedding quality so no single walk dominates.
+            #
+            # quvine_fused-filt:
+            #   Heat + Poly fused with SVD shared/private (attention gate).
+            #   Both are spectral filters calibrated by the same quantum
+            #   targets; SVD extracts the common spectral consensus while
+            #   the gate controls how much filter-specific detail to retain.
+            #
+            # quvine_fused-gcnmf:
+            #   HGCNMF + PGCNMF fused with SVD shared/private (MoE gate).
+            #   Same GCN-MF architecture but different quantum supervision
+            #   (heat vs. poly diffusion); MoE selects per node which
+            #   variant captures the more informative structural pattern.
+            # ---------------------------------------------------------------
+            _NAMED_FUSED = {
+                'quvine_fused-walk':  ('attention',       ['rwr', 'ctqw', 'dtqw'],  'attention'),
+                'quvine_fused-filt':  ('svd_shared_priv', ['heat', 'poly'],          'attention'),
+                'quvine_fused-gcnmf': ('svd_shared_priv', ['hgcnmf', 'pgcnmf'],     'moe'),
+            }
+
+            if method_name in _NAMED_FUSED:
+                fusion_method, methods_to_fuse, gate_type = _NAMED_FUSED[method_name]
+            else:
+                # Generic _-delimited parsing
+                # Format options:
+                #   quvine_fused                          -> all methods, svd fusion
+                #   quvine_fused_svd                      -> all methods, svd fusion
+                #   quvine_fused_graphreg                 -> all methods, graphreg fusion
+                #   quvine_fused_attention                -> all methods, attention fusion
+                #   quvine_fused_hybrid                   -> all methods, hybrid fusion
+                #   quvine_fused_svd_shared_priv          -> heat+poly, svd shared/private (attention gate)
+                #   quvine_fused_svd_shared_priv_moe      -> heat+poly, svd shared/private (moe gate)
+                #   quvine_fused_svd_ctqw_heat            -> ctqw+heat, svd fusion
+                #   quvine_fused_attention_rwr_poly_hgcnmf -> rwr+poly+hgcnmf, attention fusion
+                parts = method_name.split('_')
+
+                fusion_methods = ['svd', 'graphreg', 'attention', 'hybrid', 'svd_shared_priv']
+                fusion_method = 'svd'
+                gate_type = 'attention'
+                methods_to_fuse = []
+
+                if len(parts) == 2:  # quvine_fused
+                    methods_to_fuse = ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
+                elif len(parts) >= 3:
+                    if parts[2] == 'svd' and len(parts) >= 4 and parts[3] == 'shared':
+                        fusion_method = 'svd_shared_priv'
+                        if len(parts) >= 5:
+                            if parts[4] == 'priv':
+                                if len(parts) >= 6:
+                                    if parts[5] == 'moe':
+                                        gate_type = 'moe'
+                                        methods_to_fuse = parts[6:] if len(parts) > 6 else ['heat', 'poly']
+                                    else:
+                                        methods_to_fuse = parts[5:]
                                 else:
-                                    # Embedding methods after priv
-                                    methods_to_fuse = parts[5:]
+                                    methods_to_fuse = ['heat', 'poly']
                             else:
-                                # Default: heat and poly
-                                methods_to_fuse = ['heat', 'poly']
+                                methods_to_fuse = parts[4:]
                         else:
-                            # Embedding methods after shared
-                            methods_to_fuse = parts[4:]
+                            methods_to_fuse = ['heat', 'poly']
+                    elif parts[2] in fusion_methods:
+                        fusion_method = parts[2]
+                        methods_to_fuse = parts[3:] if len(parts) > 3 else \
+                            ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
                     else:
-                        # Default: heat and poly
-                        methods_to_fuse = ['heat', 'poly']
-                elif parts[2] in fusion_methods:
-                    fusion_method = parts[2]
-                    if len(parts) > 3:
-                        # Remaining parts are embedding methods
-                        methods_to_fuse = parts[3:]
-                    else:
-                        # Use all methods
-                        methods_to_fuse = ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf']
-                else:
-                    # All parts after 'fused' are embedding methods, use default svd
-                    methods_to_fuse = parts[2:]
-            
-            # Validate for svd_shared_priv: must have exactly 2 methods
-            if fusion_method == 'svd_shared_priv' and len(methods_to_fuse) != 2:
-                raise ValueError(f"svd_shared_priv fusion requires exactly 2 embedding methods, got {len(methods_to_fuse)}: {methods_to_fuse}")
+                        methods_to_fuse = parts[2:]
             
             logger.info(f"Fusing embeddings from methods: {methods_to_fuse} using {fusion_method} fusion")
             
@@ -1294,7 +1406,8 @@ class ComprehensiveEmbeddingAnalysis:
                         seeds=seeds,
                         targets=targets,
                         cfg=cfg,
-                        network_id=network_id
+                        network_id=network_id,
+                        method_hyperparams=method_hyperparams,
                     )
                     store.add(method, emb)
                     logger.info(f"  Added {method} embedding: shape {emb.shape}")
@@ -1322,37 +1435,45 @@ class ComprehensiveEmbeddingAnalysis:
         
         elif method_name in ['quvine_'+x for x in ['heat', 'poly']]:
             # QuVINE quantum-calibrated filter embeddings
-            # Generate quantum targets from seeds for calibration
             q_targets = self._generate_quantum_targets(G, seeds)
-            
+
             if method_name == 'quvine_heat':
+                hp = (method_hyperparams or {}).get('baseline_filter_heat', {})
+                if hp:
+                    logger.info(f"Using best-tuned quvine_heat hyperparameters: {hp}")
                 return generate_quvine_heat_embedding(
                     G=G,
                     q_targets=q_targets,
-                    embedding_dim=self.embedding_dim,
-                    normalize=True,
+                    embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                    normalize=hp.get('normalize', True),
                     random_state=self.base_seed
                 )
             elif method_name == 'quvine_poly':
+                hp = (method_hyperparams or {}).get('baseline_filter_poly', {})
+                if hp:
+                    logger.info(f"Using best-tuned quvine_poly hyperparameters: {hp}")
                 return generate_quvine_poly_embedding(
                     G=G,
                     q_targets=q_targets,
-                    K=4,
+                    K=hp.get('K', 4),
                     ridge=1e-6,
-                    embedding_dim=self.embedding_dim,
-                    normalize=True,
+                    embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                    normalize=hp.get('normalize', True),
                     random_state=self.base_seed
                 )
-            
+
         elif method_name in ['quvine_'+x for x in ['hgcnmf', 'pgcnmf']]:
             # QuVINE quantum-calibrated GCN-MF embeddings
-            # Generate quantum targets from seeds for calibration
             q_targets = self._generate_quantum_targets(G, seeds)
-            
+
+            # method_hyperparams['baseline_gcnmf'] overrides tuned_hyperparameters
+            _bp_gcnmf = (method_hyperparams or {}).get('baseline_gcnmf', None)
+
             if method_name == 'quvine_hgcnmf':
-                # Heat kernel + GCN-MF
-                # Use tuned hyperparameters if available, otherwise use defaults
-                if self.tuned_hyperparameters['hgcnmf'] is not None:
+                if _bp_gcnmf:
+                    params = _bp_gcnmf
+                    logger.info(f"Using best-tuned hyperparameters for hgcnmf: {params}")
+                elif self.tuned_hyperparameters['hgcnmf'] is not None:
                     params = self.tuned_hyperparameters['hgcnmf']
                     logger.info(f"Using tuned hyperparameters for hgcnmf: {params}")
                 else:
@@ -1364,11 +1485,11 @@ class ComprehensiveEmbeddingAnalysis:
                         'lr': 0.01,
                         'weight_decay': 5e-4
                     }
-                
+
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
                     q_targets=q_targets,
-                    embedding_dim=self.embedding_dim,
+                    embedding_dim=params.get('embedding_dim', self.embedding_dim),
                     diffusion_type='heat',
                     hidden_dim=params.get('hidden_dim', self.embedding_dim),
                     mf_dim=params.get('mf_dim', self.embedding_dim // 2),
@@ -1380,11 +1501,12 @@ class ComprehensiveEmbeddingAnalysis:
                     random_state=self.base_seed
                 )
                 return embeddings
-                
+
             elif method_name == 'quvine_pgcnmf':
-                # Polynomial filter + GCN-MF
-                # Use tuned hyperparameters if available, otherwise use defaults
-                if self.tuned_hyperparameters['pgcnmf'] is not None:
+                if _bp_gcnmf:
+                    params = _bp_gcnmf
+                    logger.info(f"Using best-tuned hyperparameters for pgcnmf: {params}")
+                elif self.tuned_hyperparameters['pgcnmf'] is not None:
                     params = self.tuned_hyperparameters['pgcnmf']
                     logger.info(f"Using tuned hyperparameters for pgcnmf: {params}")
                 else:
@@ -1398,11 +1520,11 @@ class ComprehensiveEmbeddingAnalysis:
                         'lr': 0.01,
                         'weight_decay': 5e-4
                     }
-                
+
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
                     q_targets=q_targets,
-                    embedding_dim=self.embedding_dim,
+                    embedding_dim=params.get('embedding_dim', self.embedding_dim),
                     diffusion_type='poly',
                     K=params.get('K', 4),
                     ridge=params.get('ridge', 1e-6),
@@ -1465,41 +1587,55 @@ class ComprehensiveEmbeddingAnalysis:
         
         for center in sampled_seeds:
             try:
-                # Expand neighborhood to get subgraph
+                # Expand neighborhood to get candidate nodes
                 subgraph_nodes = expand_neighborhood(G, {center}, radius=2)
-                
-                # Limit size if needed
+
+                # Limit size by random sampling when the neighbourhood is large
                 if len(subgraph_nodes) > subgraph_size:
                     subgraph_nodes = list(rng.choice(
                         list(subgraph_nodes),
                         size=subgraph_size,
                         replace=False
                     ))
-                    # Ensure center is included
+                    # Guarantee center is present
                     if center not in subgraph_nodes:
                         subgraph_nodes[0] = center
-                
-                # Get subgraph
+
+                # Induced subgraph — random sampling can disconnect nodes whose
+                # only path to centre passed through an unsampled intermediary.
+                # These isolated nodes make hiperwalk's internal Hamiltonian
+                # non-square and trigger a broadcast error.  Fix: keep only the
+                # connected component that contains center.
                 H = G.subgraph(subgraph_nodes).copy()
-                
+                if not nx.is_connected(H):
+                    cc_nodes = nx.node_connected_component(H, center)
+                    H = H.subgraph(cc_nodes).copy()
+
+                if H.number_of_nodes() < 3:
+                    logger.debug(
+                        f"Subgraph around seed {center} too small after "
+                        f"connectivity filter ({H.number_of_nodes()} nodes), skipping"
+                    )
+                    continue
+
                 # Run CTQW to get probability distribution
                 scores = generate_ctqw_hiperwalk_scores(
                     H,
                     root=center,
                     steps=ctqw_steps
                 )
-                
-                # Convert to probability array
+
+                # Convert to probability array aligned with subgraph node order
                 nodes_list = list(H.nodes())
                 pQ = np.array([scores.get(n, 0.0) for n in nodes_list])
                 pQ = pQ / pQ.sum() if pQ.sum() > 0 else pQ
-                
+
                 q_targets.append({
                     'nodes': nodes_list,
                     'center': center,
                     'pQ': pQ
                 })
-                
+
             except Exception as e:
                 logger.warning(f"Failed to generate quantum target for seed {center}: {e}")
                 continue
@@ -1525,9 +1661,9 @@ class ComprehensiveEmbeddingAnalysis:
         cfg = OmegaConf.create({
             'walks': {
                 'kinds': ['rwr'],
-                'num_walks': 10,
-                'num_walks_per_root': 10,
-                'walk_length': 10,
+                'num_walks': 20,
+                'num_walks_per_root': 20,
+                'walk_length': 40,
                 'restart_prob': 0.15,
                 'time': 1.0,
                 'steps': 10,
@@ -1550,11 +1686,11 @@ class ComprehensiveEmbeddingAnalysis:
             },
             'train': {
                 'embedding_dim': self.embedding_dim,
-                'window': 5,
+                'window': 10,
                 'sg': 1,
                 'negative': 5,
                 'workers': 4,
-                'epochs': 5
+                'epochs': 10
             },
             'min_count': 1,
             'seed': self.base_seed
@@ -1632,47 +1768,59 @@ class ComprehensiveEmbeddingAnalysis:
             Performance metrics
         """
         nodes = list(G.nodes())
-        seed_indices = [nodes.index(s) for s in seeds if s in nodes]
-        
-        # Compute scores
-        centroid_scores = seed_centroid_scores(embedding, seed_indices)
-        max_scores = max_seed_cosine_scores(embedding, seed_indices)
-        
-        # Evaluate ranking
-        k_values = [10, 20, 50, 100]
-        
+        node_to_idx = {n: i for i, n in enumerate(nodes)}
+        seed_indices = [node_to_idx[s] for s in seeds if s in node_to_idx]
+        target_set = set(targets) & set(nodes)
+
         results = {
             'network_id': network_id,
             'method': method_name,
         }
-        
-        # Compute precision and recall at different k
+
+        k_values = [10, 20, 40, 80]
+        # Pre-fill all metrics with 0 so the schema is consistent even on failure
         for k in k_values:
-            if k > len(nodes):
+            results[f'precision@{k}_centroid'] = 0.0
+            results[f'recall@{k}_centroid'] = 0.0
+            results[f'precision@{k}_max'] = 0.0
+            results[f'recall@{k}_max'] = 0.0
+
+        if not seed_indices or not target_set:
+            logger.warning(
+                f"Ranking skipped for {method_name}/{network_id}: "
+                f"seeds_found={len(seed_indices)}, targets_found={len(target_set)}"
+            )
+            return results
+
+        try:
+            centroid_scores = seed_centroid_scores(embedding, seed_indices)
+            max_scores = max_seed_cosine_scores(embedding, seed_indices)
+        except Exception as e:
+            logger.warning(f"Score computation failed for {method_name}/{network_id}: {e}")
+            return results
+
+        # Exclude seeds from the ranked list: seeds have self-similarity ≈ 1.0
+        # and would dominate the top-K slots, leaving no room for targets.
+        seed_index_set = set(seed_indices)
+        rankable_indices = [i for i in range(len(nodes)) if i not in seed_index_set]
+        rankable_nodes = [nodes[i] for i in rankable_indices]
+        centroid_rankable = centroid_scores[rankable_indices]
+        max_rankable = max_scores[rankable_indices]
+
+        for k in k_values:
+            if k > len(rankable_nodes):
                 continue
-            
-            # Centroid-based
-            top_k_centroid = np.argsort(centroid_scores)[-k:]
-            top_k_nodes_centroid = [nodes[i] for i in top_k_centroid]
-            
-            hits_centroid = len(set(top_k_nodes_centroid) & set(targets))
-            precision_centroid = hits_centroid / k
-            recall_centroid = hits_centroid / len(targets) if len(targets) > 0 else 0
-            
-            results[f'precision@{k}_centroid'] = precision_centroid
-            results[f'recall@{k}_centroid'] = recall_centroid
-            
-            # Max-based
-            top_k_max = np.argsort(max_scores)[-k:]
-            top_k_nodes_max = [nodes[i] for i in top_k_max]
-            
-            hits_max = len(set(top_k_nodes_max) & set(targets))
-            precision_max = hits_max / k
-            recall_max = hits_max / len(targets) if len(targets) > 0 else 0
-            
-            results[f'precision@{k}_max'] = precision_max
-            results[f'recall@{k}_max'] = recall_max
-        
+
+            top_k_centroid = set(rankable_nodes[j] for j in np.argsort(centroid_rankable)[-k:])
+            hits_centroid = len(top_k_centroid & target_set)
+            results[f'precision@{k}_centroid'] = hits_centroid / k
+            results[f'recall@{k}_centroid'] = hits_centroid / len(target_set)
+
+            top_k_max = set(rankable_nodes[j] for j in np.argsort(max_rankable)[-k:])
+            hits_max = len(top_k_max & target_set)
+            results[f'precision@{k}_max'] = hits_max / k
+            results[f'recall@{k}_max'] = hits_max / len(target_set)
+
         return results
     
     def evaluate_embedding_classification(
@@ -1680,113 +1828,196 @@ class ComprehensiveEmbeddingAnalysis:
         embedding: np.ndarray,
         G: nx.Graph,
         method_name: str,
-        network_id: str
+        network_id: str,
+        output_path: Optional[Path] = None,
     ) -> Dict:
         """
         Evaluate embedding performance on node classification task.
-        
+
+        For each of the 7 label strategies, runs classify and records f1_macro
+        and accuracy.  Per-strategy columns are always present in the returned
+        dict (NaN when a strategy fails).  If *output_path* is given, appends
+        this method's rows to ``{network_id}_node_embedding.csv`` so that the
+        full method × strategy breakdown is available per network.
+
         Returns
         -------
         dict
-            Classification performance metrics
+            Summary statistics plus per-strategy f1/accuracy columns.
         """
         nodes = list(G.nodes())
-        
+
+        # Known strategies — ensures columns exist in the summary dict even if
+        # evaluate_all_label_strategies returns fewer keys (e.g. on partial failure).
+        _STRATEGIES = [
+            'community_louvain', 'community_label_propagation', 'degree_based',
+            'centrality_betweenness', 'centrality_pagerank', 'core_periphery',
+            'homophily_based',
+        ]
+
         try:
-            # Evaluate all label strategies
             all_results = evaluate_all_label_strategies(
                 G=G,
                 embeddings=embedding,
                 node_list=nodes,
                 test_size=0.3,
-                random_state=self.base_seed
+                random_state=self.base_seed,
             )
-            
-            # Summarize results
+
             summary = summarize_classification_results(all_results)
-            
-            # Add metadata
             summary['network_id'] = network_id
             summary['method'] = method_name
-            
-            # Add individual strategy results
-            for strategy, metrics in all_results.items():
-                if 'error' not in metrics:
-                    summary[f'f1_{strategy}'] = metrics.get('f1_macro', 0.0)
-                    summary[f'accuracy_{strategy}'] = metrics.get('accuracy', 0.0)
-            
+
+            # Per-strategy columns — NaN when the strategy errored or is missing
+            for strategy in _STRATEGIES:
+                metrics = all_results.get(strategy, {})
+                summary[f'f1_{strategy}'] = (
+                    metrics.get('f1_macro', np.nan)
+                    if 'error' not in metrics else np.nan
+                )
+                summary[f'accuracy_{strategy}'] = (
+                    metrics.get('accuracy', np.nan)
+                    if 'error' not in metrics else np.nan
+                )
+
+            # Write per-strategy detail rows to node_embedding.csv
+            if output_path is not None:
+                flat_rows = flatten_classification_results(all_results, network_id, method_name)
+                emb_csv = Path(output_path) / f'{network_id}_node_embedding.csv'
+                flat_df = pd.DataFrame(flat_rows)
+                flat_df.to_csv(
+                    emb_csv,
+                    mode='a',
+                    header=not emb_csv.exists(),
+                    index=False,
+                )
+
             return summary
-            
+
         except Exception as e:
             logger.warning(f"Classification evaluation failed for {method_name} on {network_id}: {e}")
-            return {
+            summary = {
                 'network_id': network_id,
                 'method': method_name,
-                'mean_f1_macro': 0.0,
-                'mean_accuracy': 0.0,
-                'error': str(e)
+                'mean_f1_macro': np.nan,
+                'mean_accuracy': np.nan,
+                'error': str(e),
             }
+            for strategy in _STRATEGIES:
+                summary[f'f1_{strategy}'] = np.nan
+                summary[f'accuracy_{strategy}'] = np.nan
+            return summary
     
     def evaluate_embedding_link_prediction(
         self,
         embedding: np.ndarray,
         G: nx.Graph,
         method_name: str,
-        network_id: str
-    ) -> Dict:
+        network_id: str,
+        negative_strategy: str = 'random',
+    ) -> Tuple[Dict, List[Dict]]:
         """
         Evaluate embedding performance on link prediction task.
-        
+
+        Uses a proper train / test split to avoid leakage:
+        - Train set : 80 % of edges + equal-sized random negatives
+        - Test  set : 20 % of edges + equal-sized strategy-specific negatives
+        The StandardScaler is fit on train features only.
+
+        Parameters
+        ----------
+        negative_strategy : str
+            Negative edge sampling strategy for the TEST set.
+            'random', 'hard_2hop', or 'same_community'.
+
         Returns
         -------
-        dict
-            Link prediction performance metrics
+        tuple (summary_dict, tidy_rows)
+            summary_dict  : one dict with mean AUC-ROC/PR across edge methods
+                            (backward-compatible with correlation analysis)
+            tidy_rows     : list of dicts, one per edge-feature method, with
+                            columns: network_id, method, edge_feature_method,
+                            negative_strategy, auc_roc, auc_pr, f1, mrr, …
         """
         nodes = list(G.nodes())
-        
+
         try:
-            # Split edges for link prediction
-            train_graph, _, test_edges, negative_edges = split_edges(
-                G, test_ratio=0.2, val_ratio=0.0, seed=self.base_seed
+            # Split edges: 80% train, 20% test
+            train_graph, _, test_edges, test_neg_edges = split_edges(
+                G, test_ratio=0.2, val_ratio=0.0,
+                negative_sampling_strategy=negative_strategy,
+                seed=self.base_seed,
             )
-            
-            # Evaluate all edge feature methods
+            train_edges = list(train_graph.edges())
+
+            # Train negatives: random, same count as test negatives.
+            # Exclude all existing edges + already-sampled test negatives so
+            # the two negative sets are disjoint and neither overlaps real edges.
+            excluded = set(G.edges()) | set(test_neg_edges)
+            n_train_neg = max(1, len(test_neg_edges))
+            train_neg_edges = sample_negative_edges(
+                G,
+                n_samples=n_train_neg,
+                existing_edges=excluded,
+                strategy='random',
+                seed=self.base_seed + 1,
+            )
+
+            # ── Evaluate all edge-feature methods ─────────────────────────────
             all_results = evaluate_all_edge_feature_methods(
                 embeddings=embedding,
                 node_list=nodes,
                 positive_edges=test_edges,
-                negative_edges=negative_edges,
+                negative_edges=test_neg_edges,
+                train_positive_edges=train_edges,
+                train_negative_edges=train_neg_edges,
                 k_values=[10, 50, 100],
-                random_state=self.base_seed
+                random_state=self.base_seed,
             )
-            
-            # Summarize results
+
+            # ── Build tidy rows (one per edge-feature method) ─────────────────
+            tidy_rows = []
+            for edge_method, metrics in all_results.items():
+                row = {
+                    'network_id': network_id,
+                    'method': method_name,
+                    'edge_feature_method': edge_method,
+                    'negative_strategy': negative_strategy,
+                }
+                if 'error' in metrics:
+                    row['error'] = metrics['error']
+                    row.update({k: np.nan for k in _LP_METRIC_KEYS})
+                else:
+                    row.update({k: metrics.get(k, np.nan) for k in _LP_METRIC_KEYS})
+                    for k_val in [10, 50, 100]:
+                        for pfx in ['precision', 'recall', 'hit']:
+                            row[f'{pfx}@{k_val}'] = metrics.get(f'{pfx}@{k_val}', np.nan)
+                tidy_rows.append(row)
+
+            # ── Build backward-compatible summary dict ─────────────────────────
             summary = summarize_link_prediction_results(all_results)
-            
-            # Add metadata
             summary['network_id'] = network_id
             summary['method'] = method_name
-            
-            # Add individual method results
+            summary['negative_strategy'] = negative_strategy
             for edge_method, metrics in all_results.items():
                 if 'error' not in metrics:
                     summary[f'auc_roc_{edge_method}'] = metrics.get('auc_roc', 0.0)
                     summary[f'auc_pr_{edge_method}'] = metrics.get('auc_pr', 0.0)
-            
-            return summary
-            
+                    summary[f'f1_{edge_method}'] = metrics.get('f1', 0.0)
+
+            return summary, tidy_rows
+
         except Exception as e:
             logger.warning(f"Link prediction evaluation failed for {method_name} on {network_id}: {e}")
-            return {
+            err_summary = {
                 'network_id': network_id,
                 'method': method_name,
                 'mean_auc_roc': 0.0,
                 'mean_auc_pr': 0.0,
-                'error': str(e)
+                'error': str(e),
             }
-    
-        return results
-    
+            return err_summary, []
+
     def _process_single_network(
         self,
         network_tuple: Tuple[str, nx.Graph, List[int], List[int]],
@@ -1851,7 +2082,7 @@ class ComprehensiveEmbeddingAnalysis:
                 
                 # 3. Evaluate link prediction
                 if include_link_prediction:
-                    link_pred_result = self.evaluate_embedding_link_prediction(
+                    link_pred_result, _ = self.evaluate_embedding_link_prediction(
                         embedding, G, method, network_id
                     )
                     link_prediction_results.append(link_pred_result)
@@ -2374,6 +2605,293 @@ class ComprehensiveEmbeddingAnalysis:
             'merged': merged_df
         }
 
+def _compute_degree_distance_matched(
+    G: nx.Graph,
+    method_embeddings: Dict[str, np.ndarray],
+    network_id: str,
+    network_metadata: Dict,
+    seed: int = 42,
+    n_neg: int = 500,
+    verbose: bool = False,
+) -> List[Dict]:
+    """
+    Compute binned AUC-PR (cosine similarity) for degree-matched and
+    distance-matched hard negative pairs.
+
+    For EVERY network the analysis is run with both 'hard_2hop' and
+    'same_community' strategies so that aggregate visualisations work
+    regardless of which experiment generated the network.
+
+    Returns a flat list of dicts, one per (method, strategy, bin_type, bin_label).
+    """
+    from sklearn.metrics import average_precision_score as _ap_score
+
+    _DEGREE_N_BINS = 5
+    _DIST_MAX_BIN  = 5   # distances ≥ this are merged to "{DIST_MAX_BIN}+"
+
+    node_list = list(G.nodes())
+    node_idx  = {n: i for i, n in enumerate(node_list)}
+    degrees   = dict(G.degree())
+
+    network_type    = network_metadata.get('type', 'unknown')
+    case            = network_metadata.get('case', '')
+    expected_winner = network_metadata.get('expected_winner', '')
+
+    # Use the same edge split that was used during evaluation
+    try:
+        _, _, pos_edges, _ = split_edges(G, test_ratio=0.2, val_ratio=0.0, seed=seed)
+    except Exception as e:
+        logger.warning(f"  Edge split failed in degree/distance analysis: {e}")
+        return []
+
+    if len(pos_edges) == 0:
+        return []
+
+    # ── Per-pair scorers ──────────────────────────────────────────────────────
+    def _pair_scores(emb, u, v):
+        """Return (cosine, hadamard_norm) for pair (u,v), or (None, None)."""
+        ui, vi = node_idx.get(u), node_idx.get(v)
+        if ui is None or vi is None:
+            return None, None
+        eu, ev = emb[ui], emb[vi]
+        nu, nv = np.linalg.norm(eu), np.linalg.norm(ev)
+        cosine = float(np.dot(eu, ev) / (nu * nv)) if nu > 1e-12 and nv > 1e-12 else 0.0
+        # Hadamard score: L2 norm of element-wise product captures feature-dimension
+        # co-activation — a different quantity from cosine that matches the signal
+        # exploited by Hadamard+LR in the main LP evaluation.
+        hadamard = float(np.linalg.norm(eu * ev))
+        return cosine, hadamard
+
+    # ── AUC-PR within a subset of negative pairs (two scorers) ───────────────
+    def _binned_auc(emb, pos_pairs, neg_subset):
+        """Returns dict(auc_pr_cosine, auc_pr_hadamard); np.nan when undefined."""
+        nan_result = {'auc_pr_cosine': np.nan, 'auc_pr_hadamard': np.nan}
+        if len(neg_subset) == 0 or len(pos_pairs) == 0:
+            return nan_result
+        cos_scores, had_scores, labels = [], [], []
+        for u, v in pos_pairs:
+            c, h = _pair_scores(emb, u, v)
+            if c is not None:
+                cos_scores.append(c); had_scores.append(h); labels.append(1)
+        for u, v in neg_subset:
+            c, h = _pair_scores(emb, u, v)
+            if c is not None:
+                cos_scores.append(c); had_scores.append(h); labels.append(0)
+        if len(set(labels)) < 2:
+            return nan_result
+        return {
+            'auc_pr_cosine':   float(_ap_score(labels, cos_scores)),
+            'auc_pr_hadamard': float(_ap_score(labels, had_scores)),
+        }
+
+    records = []
+
+    for strategy in ('hard_2hop', 'same_community'):
+        try:
+            neg_edges = sample_negative_edges(
+                G, n_samples=n_neg, strategy=strategy, seed=seed
+            )
+        except Exception as e:
+            if verbose:
+                logger.warning(f"  Negative sampling ({strategy}) failed: {e}")
+            continue
+
+        if len(neg_edges) == 0:
+            continue
+
+        # ── Per-pair features ─────────────────────────���───────────────────────
+        neg_max_deg = np.array([
+            max(degrees.get(u, 0), degrees.get(v, 0)) for u, v in neg_edges
+        ])
+
+        # Degree quintile bins
+        deg_pct = np.percentile(neg_max_deg, np.linspace(0, 100, _DEGREE_N_BINS + 1)[1:])
+        deg_pct[-1] += 1   # ensure last bin is inclusive
+        neg_deg_bin = [
+            f"Q{min(int(np.digitize(d, deg_pct)) + 1, _DEGREE_N_BINS)}"
+            for d in neg_max_deg
+        ]
+
+        # Shortest-path distance bins (capped at _DIST_MAX_BIN)
+        # Batch using BFS from each unique source to avoid O(n²) calls
+        unique_sources = set(u for u, _ in neg_edges)
+        path_cache: Dict = {}
+        for src in unique_sources:
+            try:
+                path_cache[src] = nx.single_source_shortest_path_length(
+                    G, src, cutoff=_DIST_MAX_BIN
+                )
+            except Exception:
+                path_cache[src] = {}
+
+        neg_dist_bin = [
+            f"{_DIST_MAX_BIN}+" if min(path_cache.get(u, {}).get(v, _DIST_MAX_BIN + 1), _DIST_MAX_BIN) >= _DIST_MAX_BIN
+            else str(min(path_cache.get(u, {}).get(v, _DIST_MAX_BIN + 1), _DIST_MAX_BIN))
+            for u, v in neg_edges
+        ]
+
+        deg_bin_labels  = [f"Q{i+1}" for i in range(_DEGREE_N_BINS)]
+        dist_bin_labels = [
+            str(d) if d < _DIST_MAX_BIN else f"{_DIST_MAX_BIN}+"
+            for d in range(2, _DIST_MAX_BIN + 1)
+        ]
+
+        # ── Compute per-method, per-bin AUC-PR ───────────────────────────────
+        for method, emb in method_embeddings.items():
+            if emb.shape[0] != len(node_list):
+                continue
+
+            # Degree-matched
+            for bl in deg_bin_labels:
+                idx = [i for i, b in enumerate(neg_deg_bin) if b == bl]
+                aucs = _binned_auc(emb, pos_edges, [neg_edges[i] for i in idx])
+                records.append(dict(
+                    network_id=network_id, network_type=network_type,
+                    case=case, expected_winner=expected_winner,
+                    negative_strategy=strategy,
+                    method=method, bin_type='degree', bin_label=bl,
+                    bin_n_negs=len(idx), **aucs,
+                ))
+
+            # Distance-matched
+            for bl in dist_bin_labels:
+                idx = [i for i, b in enumerate(neg_dist_bin) if b == bl]
+                aucs = _binned_auc(emb, pos_edges, [neg_edges[i] for i in idx])
+                records.append(dict(
+                    network_id=network_id, network_type=network_type,
+                    case=case, expected_winner=expected_winner,
+                    negative_strategy=strategy,
+                    method=method, bin_type='distance', bin_label=bl,
+                    bin_n_negs=len(idx), **aucs,
+                ))
+
+    return records
+
+
+def _select_seeds_targets_structured(
+    G: nx.Graph,
+    network_metadata: Dict,
+    num_seeds: int = 15,
+    num_targets: int = 25,
+    base_seed: int = 42,
+) -> tuple:
+    """
+    Select seeds and targets aligned with the experiment's negative strategy.
+
+    - same_community : seeds and targets come from the same detected community,
+      so the ranking task is "find same-community members given seeds".
+    - hard_2hop      : seeds are top-degree nodes; targets are nodes exactly 2
+      hops away from the seed set (not direct neighbours), testing whether
+      embeddings distinguish 2-hop structural equivalents.
+    - random (fallback): original behaviour — random disjoint subsets.
+    """
+    from collections import defaultdict
+
+    strategy = network_metadata.get('negative_strategy', 'random')
+    rng = np.random.default_rng(base_seed)
+    nodes = list(G.nodes())
+    n = len(nodes)
+
+    # Pre-defined seeds/targets (e.g., from real disease GWAS data)
+    if 'seeds' in network_metadata and 'targets' in network_metadata:
+        pre_seeds = [v for v in network_metadata['seeds'] if v in G]
+        pre_targets = [v for v in network_metadata['targets'] if v in G]
+        # Remove overlap — targets must be disjoint from seeds
+        seeds_set = set(pre_seeds)
+        pre_targets = [v for v in pre_targets if v not in seeds_set]
+        if pre_seeds and pre_targets:
+            rng.shuffle(pre_seeds)
+            rng.shuffle(pre_targets)
+            return pre_seeds[:num_seeds], pre_targets[:num_targets]
+
+    num_seeds  = min(num_seeds,  n // 4)
+    num_targets = min(num_targets, n // 4)
+
+    if strategy == 'same_community' and num_seeds + num_targets <= n:
+        # Detect communities
+        partition: Dict[int, int] = {}
+        try:
+            import community as cl
+            partition = cl.best_partition(G)
+        except (ImportError, Exception):
+            try:
+                for label, comm in enumerate(
+                    nx.community.label_propagation_communities(G)
+                ):
+                    for node in comm:
+                        partition[node] = label
+            except Exception:
+                pass
+
+        if partition:
+            communities: Dict[int, list] = defaultdict(list)
+            for node, cid in partition.items():
+                communities[cid].append(node)
+
+            need = num_seeds + num_targets + 2
+            large = sorted(
+                [(cid, ns) for cid, ns in communities.items() if len(ns) >= need],
+                key=lambda x: len(x[1]),
+                reverse=True,
+            )
+            if large:
+                _, comm_nodes = large[0]
+                comm_arr = np.array(comm_nodes)
+                rng.shuffle(comm_arr)
+                seeds   = comm_arr[:num_seeds].tolist()
+                targets = comm_arr[num_seeds:num_seeds + num_targets].tolist()
+                return seeds, targets
+
+    elif strategy == 'hard_2hop' and num_seeds + num_targets <= n:
+        # Seeds: top-degree nodes
+        sorted_nodes = sorted(nodes, key=lambda v: G.degree(v), reverse=True)
+        seeds = sorted_nodes[:num_seeds]
+        seeds_set = set(seeds)
+
+        # Collect direct neighbours of seeds (1-hop)
+        one_hop: set = set()
+        for s in seeds:
+            one_hop.update(G.neighbors(s))
+        one_hop -= seeds_set
+
+        # 2-hop candidates: neighbours of 1-hop that are NOT seeds or 1-hop
+        two_hop: set = set()
+        for nbr in one_hop:
+            for nbr2 in G.neighbors(nbr):
+                if nbr2 not in seeds_set and nbr2 not in one_hop:
+                    two_hop.add(nbr2)
+
+        two_hop_list = list(two_hop)
+        if len(two_hop_list) >= num_targets:
+            rng.shuffle(two_hop_list)
+            targets = two_hop_list[:num_targets]
+            return seeds, targets
+
+    # Fallback: random disjoint selection
+    idx = rng.choice(n, size=min(num_seeds + num_targets, n), replace=False)
+    seeds   = [nodes[i] for i in idx[:num_seeds]]
+    targets = [nodes[i] for i in idx[num_seeds:num_seeds + num_targets]]
+    return seeds, targets
+
+
+def _strip_list_attrs(G: nx.Graph) -> nx.Graph:
+    """Return a copy of G with list/dict/tuple node and edge attributes removed.
+
+    GraphML does not support collection-valued attributes; stripping them allows
+    the GraphML save to succeed.
+    """
+    H = G.copy()
+    for n, data in list(H.nodes(data=True)):
+        for k, v in list(data.items()):
+            if isinstance(v, (list, dict, tuple, set)):
+                del H.nodes[n][k]
+    for u, v, data in list(H.edges(data=True)):
+        for k, val in list(data.items()):
+            if isinstance(val, (list, dict, tuple, set)):
+                del H.edges[u, v][k]
+    return H
+
+
 def run_single_network_analysis(
     G: nx.Graph,
     network_id: str,
@@ -2383,7 +2901,9 @@ def run_single_network_analysis(
     embedding_dim: int = 128,
     num_seeds: int = 15,
     num_targets: int = 25,
-    verbose: bool = True
+    verbose: bool = True,
+    resume: bool = False,
+    method_hyperparams: Optional[Dict] = None,
 ) -> Dict:
     """
     Run complete analysis for a single network (for HPC parallelization).
@@ -2421,14 +2941,35 @@ def run_single_network_analysis(
         Summary of results with paths to saved files
     """
     import os
+    import time
     from pathlib import Path
-    
+
     if embedding_methods is None:
-        embedding_methods = ['quvine_fused', 'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'netmf', 'node2vec']
-    
+        embedding_methods = [
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused-walk',
+            'quvine_heat', 'quvine_poly', 'quvine_fused-filt',
+            'quvine_hgcnmf', 'quvine_pgcnmf', 'quvine_fused-gcnmf',
+            'node2vec', 'netmf', 'baseline_filter', 'baseline_gcnmf',
+            'graphsage',
+        ]
+
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
+    # Save graph as GraphML for reproducibility and downstream inspection
+    # Strip list/dict node+edge attributes first — GraphML does not support them.
+    # Skip if already present (resume-safe).
+    graphml_path = output_path / f"{network_id}.graphml"
+    if not graphml_path.exists():
+        try:
+            nx.write_graphml(_strip_list_attrs(G), str(graphml_path))
+            if verbose:
+                logger.info(f"  GraphML saved: {graphml_path}")
+        except Exception as _e:
+            logger.warning(f"  GraphML save failed for {network_id}: {_e}")
+    elif verbose:
+        logger.info(f"  GraphML already exists, skipping save: {graphml_path}")
+
     if verbose:
         logger.info(f"="*80)
         logger.info(f"Processing network: {network_id}")
@@ -2448,8 +2989,14 @@ def run_single_network_analysis(
         n_jobs=1  # Single network, no parallelization needed
     )
     
-    # Select seeds and targets
-    seeds, targets = temp_analysis._select_seeds_targets(G)
+    # Select seeds and targets — community/topology-aware when metadata specifies a strategy
+    seeds, targets = _select_seeds_targets_structured(
+        G=G,
+        network_metadata=network_metadata,
+        num_seeds=num_seeds,
+        num_targets=num_targets,
+        base_seed=42,
+    )
     
     # Step 1: Compute complexity metrics
     if verbose:
@@ -2469,21 +3016,97 @@ def run_single_network_analysis(
     if verbose:
         logger.info(f"  ✓ Complexity metrics saved to {complexity_path}")
     
+    # Extract the negative strategy for link prediction evaluation
+    _negative_strategy = network_metadata.get('negative_strategy', 'random')
+
     # Step 2: Generate embeddings and evaluate all tasks
     all_results = {
         'ranking': [],
         'classification': [],
-        'link_prediction': []
+        'link_prediction': [],        # summary dicts (one per method, backward-compat)
+        'link_prediction_tidy': [],   # tidy rows (one per method × edge_feature_method)
+        'nc_stratified': [],          # degree/distance binned NC rows
     }
-    
+    timing_records = []
+    method_embeddings: Dict[str, np.ndarray] = {}   # kept for degree/distance analysis
+
+    _network_type = network_metadata.get('type', 'unknown')
+
+    # ── Resume: load existing results and determine which methods to skip ─────
+    methods_done: set = set()
+    if resume:
+        _task_files = [
+            ('ranking',               output_path / f'{network_id}_ranking_results.csv'),
+            ('classification',        output_path / f'{network_id}_classification_results.csv'),
+            ('link_prediction',       output_path / f'{network_id}_link_prediction_results.csv'),
+            ('link_prediction_tidy',  output_path / f'{network_id}_link_prediction.csv'),
+            ('nc_stratified',         output_path / f'{network_id}_nc_stratified.csv'),
+        ]
+        for task, csv_path in _task_files:
+            if csv_path.exists():
+                try:
+                    _df = pd.read_csv(csv_path)
+                    if 'method' in _df.columns:
+                        all_results[task].extend(_df.to_dict('records'))
+                        # Only count methods_done from the summary file (one row per method)
+                        if task == 'link_prediction':
+                            methods_done.update(_df['method'].unique())
+                except Exception as _e:
+                    logger.warning(f"  Resume: could not read {csv_path}: {_e}")
+
+        _timing_csv = output_path / f'{network_id}_timing_results.csv'
+        if _timing_csv.exists():
+            try:
+                _tdf = pd.read_csv(_timing_csv)
+                timing_records.extend(_tdf.to_dict('records'))
+            except Exception as _e:
+                logger.warning(f"  Resume: could not read timing CSV: {_e}")
+
+        # Pre-load existing embeddings so degree/distance analysis still has them
+        for _m in methods_done:
+            _emb_path = output_path / f'{network_id}_{_m}_embedding.npy'
+            if _emb_path.exists():
+                try:
+                    method_embeddings[_m] = np.load(str(_emb_path))
+                except Exception:
+                    pass
+
+        if verbose and methods_done:
+            logger.info(f"  Resume: {len(methods_done)} methods already done, "
+                        f"skipping: {sorted(methods_done)}")
+
+    all_nodes = list(G.nodes())
+
     for method in embedding_methods:
+        if resume and method in methods_done:
+            if verbose:
+                logger.info(f"  Skipping {method} (already done)")
+            continue
         if verbose:
             logger.info(f"Step 2/4: Processing method: {method}")
-        
+
         try:
-            # Generate embedding
-            embedding = temp_analysis.run_embedding_method(method, G, seeds, targets)
-            
+            # Generate embedding — timed
+            t0 = time.perf_counter()
+            embedding = temp_analysis.run_embedding_method(
+                method, G, seeds, targets, method_hyperparams=method_hyperparams
+            )
+            elapsed_embedding = time.perf_counter() - t0
+
+            method_embeddings[method] = embedding
+
+            timing_records.append({
+                'network_id': network_id,
+                'method': method,
+                'network_type': _network_type,
+                'n_nodes': G.number_of_nodes(),
+                'n_edges': G.number_of_edges(),
+                'embedding_time_s': elapsed_embedding,
+            })
+
+            if verbose:
+                logger.info(f"  - Embedding time: {elapsed_embedding:.3f}s")
+
             # Save embedding
             embedding_path = output_path / f"{network_id}_{method}_embedding.npy"
             np.save(embedding_path, embedding)
@@ -2500,17 +3123,34 @@ def run_single_network_analysis(
             if verbose:
                 logger.info(f"  - Evaluating classification task...")
             classification_result = temp_analysis.evaluate_embedding_classification(
-                embedding, G, method, network_id
+                embedding, G, method, network_id, output_path=output_path,
             )
             all_results['classification'].append(classification_result)
             
-            # Task 3: Link prediction
+            # Task 3: Link prediction — use the experiment's negative strategy
             if verbose:
-                logger.info(f"  - Evaluating link prediction task...")
-            link_pred_result = temp_analysis.evaluate_embedding_link_prediction(
-                embedding, G, method, network_id
+                logger.info(f"  - Evaluating link prediction task (negatives={_negative_strategy})...")
+            link_pred_summary, link_pred_tidy = temp_analysis.evaluate_embedding_link_prediction(
+                embedding, G, method, network_id,
+                negative_strategy=_negative_strategy,
             )
-            all_results['link_prediction'].append(link_pred_result)
+            all_results['link_prediction'].append(link_pred_summary)
+            all_results['link_prediction_tidy'].extend(link_pred_tidy)
+
+            # Task 4: NC degree/distance stratified
+            if verbose:
+                logger.info(f"  - Evaluating NC stratified task...")
+            try:
+                nc_strat_rows = evaluate_nc_stratified(
+                    G, embedding, all_nodes,
+                    random_state=42,
+                )
+                for row in nc_strat_rows:
+                    row['method'] = method
+                    row['network_id'] = network_id
+                all_results['nc_stratified'].extend(nc_strat_rows)
+            except Exception as _e:
+                logger.warning(f"  NC stratified failed for {method}: {_e}")
             
             if verbose:
                 logger.info(f"  ✓ {method} completed successfully")
@@ -2520,7 +3160,42 @@ def run_single_network_analysis(
             import traceback
             traceback.print_exc()
             continue
-    
+
+    # Save timing results
+    if timing_records:
+        timing_df = pd.DataFrame(timing_records)
+        timing_path = output_path / f"{network_id}_timing_results.csv"
+        timing_df.to_csv(timing_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ Timing results saved to {timing_path}")
+
+    # Degree- and distance-matched binned link-prediction analysis
+    # Runs for every network type using both hard_2hop and same_community strategies
+    # so that the aggregate visualisation has data regardless of the experiment variant.
+    if method_embeddings:
+        if verbose:
+            logger.info("  Computing degree/distance-matched binned AUC-PR…")
+        try:
+            dd_records = _compute_degree_distance_matched(
+                G=G,
+                method_embeddings=method_embeddings,
+                network_id=network_id,
+                network_metadata=network_metadata,
+                seed=42,
+                n_neg=min(600, max(50, G.number_of_edges() // 5)),
+                verbose=verbose,
+            )
+            if dd_records:
+                dd_path = output_path / f"{network_id}_degree_distance_matched.csv"
+                pd.DataFrame(dd_records).to_csv(dd_path, index=False)
+                if verbose:
+                    logger.info(f"  ✓ Degree/distance-matched results saved to {dd_path}")
+        except Exception as _e:
+            logger.warning(f"  Degree/distance-matched analysis failed for {network_id}: {_e}")
+            dd_path = None
+    else:
+        dd_path = None
+
     # Step 3: Save all task results
     if verbose:
         logger.info("Step 3/4: Saving task results...")
@@ -2541,13 +3216,32 @@ def run_single_network_analysis(
         if verbose:
             logger.info(f"  ✓ Classification results saved to {classification_path}")
     
-    # Save link prediction results
+    # Save link prediction results (summary — one row per method)
+    link_pred_path = None
     if all_results['link_prediction']:
         link_pred_df = pd.DataFrame(all_results['link_prediction'])
         link_pred_path = output_path / f"{network_id}_link_prediction_results.csv"
         link_pred_df.to_csv(link_pred_path, index=False)
         if verbose:
-            logger.info(f"  ✓ Link prediction results saved to {link_pred_path}")
+            logger.info(f"  ✓ Link prediction summary saved to {link_pred_path}")
+
+    # Save tidy link prediction results (one row per method × edge_feature_method)
+    lp_tidy_path = None
+    if all_results['link_prediction_tidy']:
+        lp_tidy_df = pd.DataFrame(all_results['link_prediction_tidy'])
+        lp_tidy_path = output_path / f"{network_id}_link_prediction.csv"
+        lp_tidy_df.to_csv(lp_tidy_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ Link prediction tidy CSV saved to {lp_tidy_path}")
+
+    # Save NC stratified results
+    nc_strat_path = None
+    if all_results['nc_stratified']:
+        nc_strat_df = pd.DataFrame(all_results['nc_stratified'])
+        nc_strat_path = output_path / f"{network_id}_nc_stratified.csv"
+        nc_strat_df.to_csv(nc_strat_path, index=False)
+        if verbose:
+            logger.info(f"  ✓ NC stratified results saved to {nc_strat_path}")
     
     # Step 4: Create summary
     if verbose:
@@ -2562,9 +3256,14 @@ def run_single_network_analysis(
         'methods_requested': len(embedding_methods),
         'output_dir': str(output_path),
         'complexity_file': str(complexity_path),
+        'graphml_file': str(graphml_path),
+        'timing_file': str(timing_path) if timing_records else None,
+        'degree_distance_file': str(dd_path) if dd_path else None,
         'ranking_file': str(ranking_path) if all_results['ranking'] else None,
         'classification_file': str(classification_path) if all_results['classification'] else None,
-        'link_prediction_file': str(link_pred_path) if all_results['link_prediction'] else None
+        'link_prediction_file': str(link_pred_path) if link_pred_path else None,
+        'link_prediction_tidy_file': str(lp_tidy_path) if lp_tidy_path else None,
+        'nc_stratified_file': str(nc_strat_path) if nc_strat_path else None,
     }
     
     # Save summary
@@ -2705,23 +3404,29 @@ def collect_and_aggregate_results(
             logger.error(f"  ✗ Failed to process {network_id}: {e}")
             continue
     
+    if not all_data:
+        logger.error("No data collected — check that result directories are non-empty.")
+        return pd.DataFrame()
+
     # Create comprehensive DataFrame
     comprehensive_df = pd.DataFrame(all_data)
-    
+
     # Save to CSV
     output_path = results_path / output_file
     comprehensive_df.to_csv(output_path, index=False)
-    
+
     if verbose:
         logger.info("="*80)
         logger.info("AGGREGATION COMPLETE")
         logger.info(f"Total rows: {len(comprehensive_df)}")
         logger.info(f"Total columns: {len(comprehensive_df.columns)}")
-        logger.info(f"Networks: {comprehensive_df['network_id'].nunique()}")
-        logger.info(f"Methods: {comprehensive_df['method'].nunique()}")
+        if 'network_id' in comprehensive_df.columns:
+            logger.info(f"Networks: {comprehensive_df['network_id'].nunique()}")
+        if 'method' in comprehensive_df.columns:
+            logger.info(f"Methods: {comprehensive_df['method'].nunique()}")
         logger.info(f"Saved to: {output_path}")
         logger.info("="*80)
-    
+
     return comprehensive_df
 
 

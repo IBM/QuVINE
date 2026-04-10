@@ -277,16 +277,15 @@ def seed_centroid_scores(Z, seed_indices):
     scores: cosine similarity to seed centroid 
     
     """
+    if len(seed_indices) == 0:
+        return np.zeros(Z.shape[0], dtype=float)
+
     Z_norm = l2_normalize(Z, axis=1)
     Z_seed = Z_norm[seed_indices]
     centroid = Z_seed.mean(axis=0)
-    #normalize centroid 
     centroid /= max(np.linalg.norm(centroid), 1e-12)
-    
-    #cosine similarity to centroid 
     scores = Z_norm @ centroid
-    
-    return scores 
+    return scores
 
 def max_seed_cosine_scores(Z, seed_indices, block=4096):
     """
@@ -296,7 +295,12 @@ def max_seed_cosine_scores(Z, seed_indices, block=4096):
     block: compute in chunks to reduce memory if needed.
     """
     Z = l2_normalize(Z)
-    S = Z[list(seed_indices)]  # (m, e)
+    seed_idx = list(seed_indices)
+
+    if len(seed_idx) == 0:
+        return np.zeros(Z.shape[0], dtype=float)
+
+    S = Z[seed_idx]  # (m, e)
 
     scores = np.full(Z.shape[0], -np.inf, dtype=float)
 

@@ -401,7 +401,7 @@ def evaluate_node_classification(
     
     # Initialize classifier
     if classifier == 'logistic':
-        clf = LogisticRegression(max_iter=1000, random_state=random_state, multi_class='ovr')
+        clf = LogisticRegression(max_iter=1000, random_state=random_state)
     elif classifier == 'random_forest':
         clf = RandomForestClassifier(n_estimators=100, random_state=random_state)
     else:
@@ -441,14 +441,15 @@ def evaluate_node_classification(
     if min_samples >= n_splits:
         cv_scores = []
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-        
+
         for train_idx, test_idx in skf.split(X, y):
             X_train_cv, X_test_cv = X[train_idx], X[test_idx]
-            X_train_cv_scaled = scaler.transform(X_train_cv)
-            X_test_cv_scaled = scaler.transform(X_test_cv)
+            cv_scaler = StandardScaler()
+            X_train_cv_scaled = cv_scaler.fit_transform(X_train_cv)
+            X_test_cv_scaled = cv_scaler.transform(X_test_cv)
             y_train_cv, y_test_cv = y[train_idx], y[test_idx]
             
-            clf_cv = LogisticRegression(max_iter=1000, random_state=random_state, multi_class='ovr')
+            clf_cv = LogisticRegression(max_iter=1000, random_state=random_state)
             clf_cv.fit(X_train_cv_scaled, y_train_cv)
             y_pred_cv = clf_cv.predict(X_test_cv_scaled)
             
@@ -528,11 +529,12 @@ def evaluate_all_label_strategies(
         warnings.warn(f"Core-periphery labeling failed: {e}")
         results['core_periphery'] = {'error': str(e)}
     
-    # 5. Homophily-based labels (graph structure-aware)
+    # 5. Homophily-based labels (topology-only: prevents circular dependency
+    #    where a method's own embedding defines the labels it is then scored on).
     try:
         labels = generate_homophily_labels(
             G,
-            embeddings=embeddings,
+            embeddings=None,
             feature_weight=0.5,
             neighbor_weight=0.5,
             random_state=random_state
@@ -546,6 +548,180 @@ def evaluate_all_label_strategies(
         results['homophily_based'] = {'error': str(e)}
     
     return results
+
+
+def evaluate_nc_stratified(
+    G: nx.Graph,
+    embeddings: np.ndarray,
+    node_list: List[int],
+    label_strategy: str = 'louvain',
+    n_degree_bins: int = 5,
+    dist_max_bin: int = 5,
+    test_size: float = 0.3,
+    random_state: int = 42,
+) -> List[Dict]:
+    """
+    Evaluate node classification stratified by node degree and distance from hubs.
+
+    Produces one row per (bin_type, bin_label) for the primary label strategy,
+    reporting per-bin accuracy on the test nodes.  This mirrors the degree/
+    distance-matched controls used in LP and ranking evaluations.
+
+    Parameters
+    ----------
+    G : nx.Graph
+    embeddings : np.ndarray  (n_nodes × dim)
+    node_list : list
+        Nodes in the same order as rows of *embeddings*.
+    label_strategy : str
+        Community detection method to generate labels ('louvain' or 'label_propagation').
+    n_degree_bins : int
+        Number of degree quantile bins (default 5 → Q1–Q5).
+    dist_max_bin : int
+        Distances ≥ this value are grouped into a single "{dist_max_bin}+" bin.
+    test_size : float
+        Fraction of nodes held out for evaluation.
+    random_state : int
+
+    Returns
+    -------
+    list of dicts
+        Each dict has keys: bin_type, bin_label, bin_n_nodes, accuracy, f1_macro.
+        *method* and *network_id* are added by the caller.
+    """
+    try:
+        labels = generate_community_labels(G, method=label_strategy)
+    except Exception:
+        try:
+            labels = generate_community_labels(G, method='label_propagation')
+        except Exception as e:
+            warnings.warn(f"NC stratified: label generation failed: {e}")
+            return []
+
+    X = embeddings
+    y = np.array([labels[n] for n in node_list])
+    unique_labels, label_counts = np.unique(y, return_counts=True)
+
+    if label_counts.min() < 2 or len(unique_labels) < 2:
+        return []
+
+    try:
+        X_train, X_test, y_train, y_test, _, test_nodes = train_test_split(
+            X, y, list(node_list), test_size=test_size,
+            random_state=random_state, stratify=y,
+        )
+    except Exception as e:
+        warnings.warn(f"NC stratified: train_test_split failed: {e}")
+        return []
+
+    # Normalise: fit on train only
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s = scaler.transform(X_test)
+
+    clf = LogisticRegression(max_iter=1000, random_state=random_state)
+    try:
+        clf.fit(X_train_s, y_train)
+    except Exception as e:
+        warnings.warn(f"NC stratified: classifier fit failed: {e}")
+        return []
+
+    y_pred = clf.predict(X_test_s)
+
+    # Degree bins — percentile thresholds on test-node degrees
+    node_degrees = dict(G.degree())
+    test_degrees = np.array([node_degrees.get(n, 0) for n in test_nodes])
+    deg_thresholds = np.percentile(test_degrees, np.linspace(0, 100, n_degree_bins + 1)[1:])
+    deg_thresholds[-1] += 1  # make the last bin right-inclusive
+    test_deg_bins = [
+        f"Q{min(int(np.digitize(d, deg_thresholds)) + 1, n_degree_bins)}"
+        for d in test_degrees
+    ]
+
+    # Distance bins — min distance from top-sqrt(N) hub nodes
+    hub_count = max(1, int(np.sqrt(G.number_of_nodes())))
+    hubs = sorted(node_degrees, key=lambda v: node_degrees[v], reverse=True)[:hub_count]
+
+    node_min_dist: Dict[int, int] = {}
+    for hub in hubs:
+        try:
+            dists = nx.single_source_shortest_path_length(G, hub, cutoff=dist_max_bin)
+        except Exception:
+            dists = {}
+        for v, d in dists.items():
+            if v not in node_min_dist or d < node_min_dist[v]:
+                node_min_dist[v] = d
+
+    test_dist_bins = [
+        f"{dist_max_bin}+" if min(node_min_dist.get(n, dist_max_bin + 1), dist_max_bin) >= dist_max_bin
+        else str(min(node_min_dist.get(n, dist_max_bin + 1), dist_max_bin))
+        for n in test_nodes
+    ]
+
+    rows = []
+    bin_labels_deg = [f"Q{i+1}" for i in range(n_degree_bins)]
+    bin_labels_dist = [
+        str(d) if d < dist_max_bin else f"{dist_max_bin}+"
+        for d in range(1, dist_max_bin + 1)
+    ]
+
+    for bin_type, bin_labels, node_bins in [
+        ('degree',   bin_labels_deg,  test_deg_bins),
+        ('distance', bin_labels_dist, test_dist_bins),
+    ]:
+        for bl in bin_labels:
+            idxs = [i for i, b in enumerate(node_bins) if b == bl]
+            if len(idxs) == 0:
+                continue
+            yt = y_test[idxs]
+            yp = y_pred[idxs]
+            n_cls = len(np.unique(yt))
+            rows.append({
+                'bin_type': bin_type,
+                'bin_label': bl,
+                'bin_n_nodes': len(idxs),
+                'accuracy': float(accuracy_score(yt, yp)),
+                'f1_macro': float(f1_score(yt, yp, average='macro', zero_division=0))
+                            if n_cls >= 2 else float(np.nan),
+                'label_strategy': label_strategy,
+            })
+
+    return rows
+
+
+_CLASSIFICATION_METRIC_KEYS = [
+    'f1_macro', 'accuracy', 'precision_macro', 'recall_macro',
+    'n_classes', 'n_train', 'n_test',
+]
+
+
+def flatten_classification_results(
+    results: Dict[str, Dict[str, float]],
+    network_id: str,
+    method: str,
+) -> List[Dict]:
+    """
+    Flatten results from evaluate_all_label_strategies into one dict per strategy.
+
+    Returns one row per label strategy with columns: network_id, method,
+    label_strategy, f1_macro, accuracy, precision_macro, recall_macro,
+    n_classes, n_train, n_test. Failed strategies produce NaN values so the
+    schema is always consistent.
+    """
+    rows = []
+    for strategy, metrics in results.items():
+        row = {
+            'network_id': network_id,
+            'method': method,
+            'label_strategy': strategy,
+        }
+        if 'error' in metrics:
+            row.update({k: np.nan for k in _CLASSIFICATION_METRIC_KEYS})
+            row['error'] = metrics['error']
+        else:
+            row.update({k: metrics.get(k, np.nan) for k in _CLASSIFICATION_METRIC_KEYS})
+        rows.append(row)
+    return rows
 
 
 def summarize_classification_results(
@@ -589,5 +765,3 @@ def summarize_classification_results(
         'min_accuracy': np.min(accuracy_scores),
         'n_successful_strategies': len(f1_scores)
     }
-
-# Made with Bob

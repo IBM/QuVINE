@@ -29,8 +29,6 @@ def _prep_blocks(Zs, do_row_norm=True, do_block_standardize=True):
     out = []
     for Z in Zs:
         Zp = Z
-        # your normalize() might already row-normalize; keep it if you trust it
-        # but I prefer explicit:
         if do_row_norm:
             Zp = _row_norm(Zp)
         if do_block_standardize:
@@ -48,6 +46,31 @@ def fuse_embeddings_svd(Zs, k):
     return U[:, :k] * S[:k]                      # (n,k), scaled PCs
 
 # ---------- Optional: graph-regularized shared U, scalable ----------
+def _apply_graph_regularization(U0, L, beta, lam, max_cg_iter=200, cg_tol=1e-6):
+    """
+    Solve (beta*L + (1+lam)*I) u_j = u0_j for each column via sparse CG.
+    Returns U0 unchanged if scipy is unavailable or beta <= 0.
+    """
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+
+    if not sp.issparse(L):
+        # DO NOT densify on big graphs; pass sparse L.
+        L = sp.csr_matrix(L)
+
+    n, k = U0.shape
+    Aop = (beta * L) + (1.0 + lam) * sp.eye(n, format="csr")
+
+    U = np.zeros_like(U0)
+    for j in range(k):
+        rhs = U0[:, j]
+        uj, info = spla.cg(Aop, rhs, maxiter=max_cg_iter, rtol=cg_tol)
+        if info != 0:
+            uj = rhs
+        U[:, j] = uj
+    return U
+
+
 def fuse_embeddings_graphreg(Zs, k, L, beta=1e-2, lam=1e-2, max_cg_iter=200, cg_tol=1e-6):
     """
     Solve: argmin_U ||U - Zbar||_F^2 + beta * tr(U^T L U) + lam ||U||_F^2
@@ -56,60 +79,33 @@ def fuse_embeddings_graphreg(Zs, k, L, beta=1e-2, lam=1e-2, max_cg_iter=200, cg_
     This is a *much simpler* regularization story than your full multiview + Ws + alpha,
     and it avoids over-parameterization reviewers will question.
     """
-    # 1) init from SVD fusion
-    U0 = fuse_embeddings_svd(Zs, k)  # (n,k)
+    U0 = fuse_embeddings_svd(Zs, k)
 
     if beta <= 0:
         return U0
 
-    # 2) Use sparse CG solves per column:
-    # (beta L + (1+lam) I) u_j = u0_j
     try:
-        import scipy.sparse as sp
-        import scipy.sparse.linalg as spla
-
-        if not sp.issparse(L):
-            # DO NOT densify on big graphs; if L is dense here, you should pass sparse L.
-            L = sp.csr_matrix(L)
-
-        n = L.shape[0]
-        Aop = (beta * L) + (1.0 + lam) * sp.eye(n, format="csr")
-
-        U = np.zeros_like(U0)
-        for j in range(k):
-            rhs = U0[:, j]
-            uj, info = spla.cg(Aop, rhs, maxiter=max_cg_iter, rtol=cg_tol)
-            if info != 0:
-                # fallback: keep original column if CG struggles
-                uj = rhs
-            U[:, j] = uj
-        return U
-
+        return _apply_graph_regularization(U0, L, beta, lam, max_cg_iter, cg_tol)
     except ImportError:
-        # No scipy: fallback to no graphreg (still fast and strong baseline)
         return U0
 
 def fuse_embeddings_attention(Zs, k, temperature=1.0):
     """
     Attention-based fusion: learn attention weights for each embedding view.
-    
+
     Uses softmax attention over embedding similarities to weight each view.
     """
     n = Zs[0].shape[0]
-    num_views = len(Zs)
     
-    # Compute pairwise similarities for each view
+    # Compute mean pairwise similarity for each view as a quality score.
+    # Mean of gram matrix = ||Z_norm||_F^2 / n, avoids materializing N×N matrix.
     similarities = []
     for Z in Zs:
-        # Normalize embeddings
         Z_norm = Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-8)
-        # Compute similarity matrix
-        sim = Z_norm @ Z_norm.T
-        similarities.append(sim.mean())  # Average similarity as view quality score
-    
-    # Compute attention weights using softmax
-    similarities = np.array(similarities)
-    attention_weights = np.exp(similarities / temperature) / np.exp(similarities / temperature).sum()
+        similarities.append((Z_norm ** 2).sum() / n)
+
+    from scipy.special import softmax
+    attention_weights = softmax(np.array(similarities) / temperature)
     
     # Weighted combination
     Z_weighted = sum(w * Z for w, Z in zip(attention_weights, Zs))
@@ -128,108 +124,86 @@ def fuse_embeddings_hybrid(Zs, k, L=None, beta=1e-2, lam=1e-2, temperature=1.0):
     # Step 1: Attention-based weighting
     attention_fused = fuse_embeddings_attention(Zs, k=k, temperature=temperature)
     
-    # Step 2: Apply graph regularization if L is provided
     if L is not None and beta > 0:
         try:
-            import scipy.sparse as sp
-            import scipy.sparse.linalg as spla
-            
-            if not sp.issparse(L):
-                L = sp.csr_matrix(L)
-            
-            n = L.shape[0]
-            Aop = (beta * L) + (1.0 + lam) * sp.eye(n, format="csr")
-            
-            U = np.zeros_like(attention_fused)
-            for j in range(k):
-                rhs = attention_fused[:, j]
-                uj, info = spla.cg(Aop, rhs, maxiter=200, rtol=1e-6)
-                if info != 0:
-                    uj = rhs
-                U[:, j] = uj
-            return U
+            return _apply_graph_regularization(attention_fused, L, beta, lam)
         except ImportError:
-            return attention_fused
-    
+            pass
+
     return attention_fused
 
 
 def fuse_embeddings_svd_shared_private(Zs, k, gate_type='attention'):
     """
-    Advanced SVD-based fusion with shared/private decomposition.
-    
-    Decomposes embeddings into shared and private components using SVD,
-    then combines them using gated attention or mixture of experts.
-    
-    Based on the pseudocode:
-    1. Layer normalize each embedding
-    2. Concatenate and apply SVD to get shared components
-    3. Compute private components as residuals
-    4. Use gated attention or mixture of experts to combine
-    
+    SVD-based shared/private fusion for N ≥ 2 embedding views.
+
+    Each view is decomposed into a *shared* component (extracted by a joint
+    rank-k SVD over all views concatenated) and a *private* residual.  The
+    views are then recombined using one of two gating strategies:
+
+    ``attention`` — a per-feature sigmoid gate is applied to each view's
+        private component; the result is added to the mean shared component.
+        Good when views are complementary and private details matter.
+
+    ``moe`` — a per-node softmax over the V views selects a weighted
+        combination of all normalised views.  Good when views are exchangeable
+        and the model should pick the most informative one per node.
+
     Parameters
     ----------
-    Zs : list of np.ndarray
-        List of embeddings, each of shape (n, d)
+    Zs : list of np.ndarray, each (n, d)
+        Embedding views to fuse (V ≥ 2).
     k : int
-        Rank for SVD approximation (typically k = d // 4)
-    gate_type : str
-        'attention' for gate-based attention or 'moe' for mixture of experts
-        
+        Rank for SVD approximation (typically d // 4).
+    gate_type : {'attention', 'moe'}
+
     Returns
     -------
-    Z_final : np.ndarray
-        Fused embedding of shape (n, d)
+    Z_final : np.ndarray, shape (n, d)
     """
-    if len(Zs) != 2:
-        raise ValueError("SVD shared/private fusion currently supports exactly 2 embeddings")
-    
-    Z_h, Z_p = Zs[0], Zs[1]
-    n, d = Z_h.shape
-    
-    # Step 1: Layer normalization
-    Z_hn = _layer_norm(Z_h)
-    Z_pn = _layer_norm(Z_p)
-    
-    # Step 2: Concatenate and apply SVD
-    Z = np.concatenate([Z_hn, Z_pn], axis=1)  # (n, 2d)
-    U, S, Vh = svd(Z, full_matrices=False)
-    
-    # Step 3: Rank-k approximation
-    k = min(k, d)  # Ensure k <= d
-    Uk = U[:, :k]
-    Sk = S[:k]
-    Vhk = Vh[:k, :]  # (k, 2d)
-    
-    Z_hat = (Uk * Sk) @ Vhk  # (n, 2d) rank-k approximation
-    
-    # Step 4: Extract shared components
-    Z_h_shared = Z_hat[:, :d]
-    Z_p_shared = Z_hat[:, d:]
-    
-    # Step 5: Compute private components
-    Z_h_priv = Z_h - Z_h_shared
-    Z_p_priv = Z_p - Z_p_shared
-    
-    # Step 6: Combine using gated attention or mixture of experts
+    V = len(Zs)
+    if V < 2:
+        raise ValueError("fuse_embeddings_svd_shared_private requires at least 2 views.")
+
+    n, d = Zs[0].shape
+
+    # 1. Layer-normalise all views.
+    Zn = [_layer_norm(Z) for Z in Zs]
+
+    # 2. Joint SVD over the horizontally concatenated views → rank-k shared reconstruction.
+    Z_cat = np.concatenate(Zn, axis=1)          # (n, V*d)
+    U, S, Vh = svd(Z_cat, full_matrices=False)
+    k_eff = min(k, Z_cat.shape[1])
+    Z_hat = (U[:, :k_eff] * S[:k_eff]) @ Vh[:k_eff, :]  # (n, V*d)
+
+    # 3. Per-view shared and private components.
+    Z_sh   = [Z_hat[:, i*d:(i+1)*d] for i in range(V)]   # each (n, d)
+    Z_priv = [Zn[i] - Z_sh[i]        for i in range(V)]   # each (n, d)
+
+    # Mean shared component — the consensus across all views.
+    Z_shared_mean = np.mean(np.stack(Z_sh, axis=0), axis=0)   # (n, d)
+
     if gate_type == 'attention':
-        # Option 1: Gate-based attention
-        features = np.concatenate([Z_h_shared, Z_p_shared, Z_h_priv, Z_p_priv], axis=1)
-        gate = _simple_mlp_gate(features, 2*d)  # (n, 2d) - need 2d output for both gates
-        
-        g_h, g_p = gate[:, :d], gate[:, d:]
-        Z_final = 0.5 * (Z_h_shared + Z_p_shared) + g_h * Z_h_priv + g_p * Z_p_priv
-        
+        # Gate features: [all shared ‖ all private] → (n, 2V*d)
+        # Gate output:   (n, V*d)  — one d-dimensional sigmoid gate per view.
+        gate_feat = np.concatenate(Z_sh + Z_priv, axis=1)     # (n, 2V*d)
+        gate = _simple_mlp_gate(gate_feat, V * d)              # (n, V*d)
+
+        # Add gated private corrections to the shared mean; average over views.
+        private_mix = sum(gate[:, i*d:(i+1)*d] * Z_priv[i] for i in range(V))
+        Z_final = Z_shared_mean + private_mix / V
+
     elif gate_type == 'moe':
-        # Option 2: Mixture of experts
-        features = np.concatenate([Z_h, Z_p, Z_h_priv, Z_p_priv], axis=1)
-        gate = _simple_mlp_gate(features, d)  # (n, d)
-        
-        Z_final = gate * Z_h + (1 - gate) * Z_p
-        
+        # Gate features: normalised views concatenated → (n, V*d)
+        # Gate output:   (n, V) softmax weights over views.
+        gate_feat = np.concatenate(Zn, axis=1)                 # (n, V*d)
+        raw = _simple_mlp_gate(gate_feat, V)                   # (n, V) sigmoid
+        gate_w = raw / (raw.sum(axis=1, keepdims=True) + 1e-8) # (n, V) sum-to-1
+        Z_final = sum(gate_w[:, i:i+1] * Zn[i] for i in range(V))  # (n, d)
+
     else:
-        raise ValueError(f"Unknown gate_type: {gate_type}. Use 'attention' or 'moe'.")
-    
+        raise ValueError(f"Unknown gate_type '{gate_type}'. Use 'attention' or 'moe'.")
+
     return Z_final
 
 
@@ -248,9 +222,6 @@ def _simple_mlp_gate(features, output_dim):
     This is a simplified version; for production, consider using PyTorch.
     """
     n, input_dim = features.shape
-    
-    # Initialize weights (simple random initialization)
-    np.random.seed(42)
     hidden_dim = max(64, output_dim)
     
     W1 = np.random.randn(input_dim, hidden_dim) * 0.01
@@ -331,8 +302,6 @@ def fuse_embeddings(store, k=None, L=None, method="svd",
         return [fuse_embeddings_hybrid(Zs, k, L=L, beta=beta, lam=lam, temperature=temperature)], ['hybrid']
     
     if method == "svd_shared_priv":
-        if len(Zs) != 2:
-            raise ValueError("svd_shared_priv fusion requires exactly 2 embeddings")
         rank = svd_rank if svd_rank is not None else max(k // 4, 1)
         return [fuse_embeddings_svd_shared_private(Zs, rank, gate_type=gate_type)], [f'svd_shared_priv_{gate_type}']
 
@@ -345,14 +314,10 @@ def fuse_embeddings(store, k=None, L=None, method="svd",
         attention_emb = fuse_embeddings_attention(Zs, k, temperature=temperature)
         hybrid_emb = fuse_embeddings_hybrid(Zs, k, L=L, beta=beta, lam=lam, temperature=temperature)
         
-        # Add shared/private if exactly 2 embeddings
-        if len(Zs) == 2:
-            rank = svd_rank if svd_rank is not None else max(k // 4, 1)
-            svd_sp_att = fuse_embeddings_svd_shared_private(Zs, rank, gate_type='attention')
-            svd_sp_moe = fuse_embeddings_svd_shared_private(Zs, rank, gate_type='moe')
-            return [svd_emb, graphreg_emb, attention_emb, hybrid_emb, svd_sp_att, svd_sp_moe], \
-                   ['svd', 'graphreg', 'attention', 'hybrid', 'svd_shared_priv_attention', 'svd_shared_priv_moe']
-        
-        return [svd_emb, graphreg_emb, attention_emb, hybrid_emb], ['svd', 'graphreg', 'attention', 'hybrid']
+        rank = svd_rank if svd_rank is not None else max(k // 4, 1)
+        svd_sp_att = fuse_embeddings_svd_shared_private(Zs, rank, gate_type='attention')
+        svd_sp_moe = fuse_embeddings_svd_shared_private(Zs, rank, gate_type='moe')
+        return [svd_emb, graphreg_emb, attention_emb, hybrid_emb, svd_sp_att, svd_sp_moe], \
+               ['svd', 'graphreg', 'attention', 'hybrid', 'svd_shared_priv_attention', 'svd_shared_priv_moe']
         
     raise ValueError(f"Unknown fusion method: {method}")
