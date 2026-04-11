@@ -52,12 +52,12 @@
 set -e
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-N_REPLICATES=25
-N_NODES=150
-OUTPUT_DIR="/dccstor/boseukb/Q/NetMed/QuVINE/results/hard_negatives_v3/"
+N_REPLICATES=30
+N_NODES=1000
+OUTPUT_DIR="/dccstor/boseukb/Q/NetMed/QuVINE/results/hard_negatives_v4/"
 QUEUE="normal"
-WALLTIME="30:00"
-MEMORY="2"
+WALLTIME="48:00"
+MEMORY="4"
 METHODS="all"
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/python"
 HPARAM_FILE="/dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning/best_hyperparams.json"

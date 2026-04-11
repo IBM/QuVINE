@@ -1,23 +1,27 @@
 #!/bin/bash
 ################################################################################
-# PPI Disease Network Job Submission
+# PPI Disease Network Job Submission — v4
 #
-# Submits 15 LSF jobs (5 PPI networks × 3 diseases) using tuned hyperparameters
-# from results/hparam_tuning/best_hyperparams.json.
+# 2 PPI networks × 3 diseases × 50 replicates = 300 analysis jobs.
+# Focused on STRING and BioPlex3 for quick results.
 #
-# Networks  : STRING, BioPlex3, HumanNet, PCNet, ProteomeHD
-# Diseases  : asthma, autism, schizophrenia
-# Methods   : all (quvine_fused, quvine_ctqw, quvine_dtqw, quvine_rwr,
-#              quvine_heat, quvine_poly, quvine_hgcnmf, quvine_pgcnmf,
-#              netmf, node2vec, baseline_gcnmf, baseline_filter, graphsage)
+# Key fix vs v3:
+#   ctqw/dtqw were failing because tuned hyperparameters had
+#   max_nodes=160, max_edges=200 — views too sparse for dense PPI subgraphs.
+#   Fix: after loading hparams, clamp max_nodes=250, max_edges=5000 so every
+#   view contains enough edges for quantum walk root nodes to have neighbors.
 #
-# Subsampling: large PPI networks are subsampled to MAX_NODES nodes around
-#              disease seeds/targets so jobs complete in < 1 hour each.
+# Parameters vs v3:
+#   - Networks   : STRING, BioPlex3 only  (v3: all 5)
+#   - Max nodes  : 300  (v3: 500)
+#   - Replicates : 50   (v3: 30)
+#   - Walltime   : 1:30 (v3: 2:00)
+#   - Memory     : 8GB
 #
 # Usage:
-#   bash scripts/submit_ppi_disease_jobs.sh [--dry-run] [--queue QUEUE]
-#                                            [--walltime TIME] [--memory MEM]
-#                                            [--max-nodes N]
+#   bash scripts/submit_ppi_disease_jobs_v4.sh [--dry-run] [--queue QUEUE]
+#                                               [--walltime TIME] [--memory MEM]
+#                                               [--max-nodes N] [--n-reps N]
 #
 ################################################################################
 
@@ -28,27 +32,28 @@ set -e
 # ---------------------------------------------------------------------------
 QUEUE="normal"
 WALLTIME="72:00"
-MEMORY="16"
+MEMORY="12"
 MAX_NODES="4000"
+N_REPS="30"
 DRY_RUN=false
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
-RESUME=false
+METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter,graphsage"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --queue)     QUEUE="$2";     shift 2 ;;
-        --walltime)  WALLTIME="$2";  shift 2 ;;
-        --memory)    MEMORY="$2";    shift 2 ;;
-        --max-nodes) MAX_NODES="$2"; shift 2 ;;
+        --queue)      QUEUE="$2";      shift 2 ;;
+        --walltime)   WALLTIME="$2";   shift 2 ;;
+        --memory)     MEMORY="$2";     shift 2 ;;
+        --max-nodes)  MAX_NODES="$2";  shift 2 ;;
+        --n-reps)     N_REPS="$2";     shift 2 ;;
         --python-env) PYTHON_ENV="$2"; shift 2 ;;
-        --resume)    RESUME=true;    shift ;;
-        --dry-run)   DRY_RUN=true;   shift ;;
+        --dry-run)    DRY_RUN=true;    shift ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--queue QUEUE] [--walltime TIME] [--memory MEM] [--max-nodes N] [--resume] [--dry-run]"
+            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--max-nodes N] [--n-reps R] [--dry-run]"
             exit 1 ;;
     esac
 done
@@ -59,66 +64,66 @@ done
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 DATA_ROOT="/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data"
-HPARAM_JSON="/dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning/best_hyperparams.json"
-OUTPUT_BASE="/dccstor/boseukb/Q/NetMed/QuVINE/results/ppi_disease"
+HPARAM_BASE="/dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning"
+OUTPUT_BASE="/dccstor/boseukb/Q/NetMed/QuVINE/results/ppi_disease_v4"
 LOG_DIR="${OUTPUT_BASE}/logs"
-METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter,graphsage"
 
-mkdir -p "$LOG_DIR"
-mkdir -p "${OUTPUT_BASE}/results"
+mkdir -p "$LOG_DIR" "${OUTPUT_BASE}/results"
 
 # ---------------------------------------------------------------------------
-# Network definitions
+# Network definitions (STRING + BioPlex3 only)
 # ---------------------------------------------------------------------------
 declare -A NET_PATHS
 NET_PATHS["STRING"]="${DATA_ROOT}/networks/STRING/edges_list_ncbi.csv"
 NET_PATHS["BioPlex3"]="${DATA_ROOT}/networks/BioPlex3_shared/edges_list_ncbi.csv"
-NET_PATHS["HumanNet"]="${DATA_ROOT}/networks/HumanNetV3/edges_list_ncbi.csv"
-NET_PATHS["PCNet"]="${DATA_ROOT}/networks/PCNet/edges_list_ncbi.csv"
-NET_PATHS["ProteomeHD"]="${DATA_ROOT}/networks/ProteomeHD/edges_list_ncbi.csv"
 
-NETWORKS="STRING BioPlex3 HumanNet PCNet ProteomeHD"
+NETWORKS="STRING BioPlex3"
 DISEASES="asthma autism schizophrenia"
 
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
+TOTAL_JOBS=$(( 2 * 3 * N_REPS ))
 echo "======================================================"
-echo " PPI Disease Network Job Submission"
+echo " PPI Disease Network Job Submission — v4"
 echo "======================================================"
 echo " Project dir  : $PROJECT_DIR"
-echo " Data root    : $DATA_ROOT"
-echo " Hparam file  : $HPARAM_JSON"
 echo " Output dir   : $OUTPUT_BASE"
 echo " Queue        : $QUEUE"
 echo " Wall time    : $WALLTIME"
 echo " Memory       : ${MEMORY}GB"
-echo " Max nodes    : ${MAX_NODES} (subsampled around seeds/targets)"
-echo " Methods      : $METHODS"
-echo " Resume       : $RESUME"
+echo " Networks     : $NETWORKS"
+echo " Max nodes    : ${MAX_NODES} (seeds+targets always kept)"
+echo " Replicates   : ${N_REPS} (seeds 0..$((N_REPS-1)))"
+echo " Total jobs   : ${TOTAL_JOBS}"
+echo " ctqw/dtqw fix: max_nodes=250, max_edges=5000 (overrides tuned hparams)"
 echo " Dry run      : $DRY_RUN"
 echo "======================================================"
 echo ""
 [ "$DRY_RUN" = true ] && echo "DRY RUN MODE — no jobs will be submitted" && echo ""
 
 # ---------------------------------------------------------------------------
-# Submit one job per (network, disease)
+# Submit jobs
 # ---------------------------------------------------------------------------
-ANALYSIS_JOB_IDS=()
+JOB_IDS=()
 JOB_COUNT=0
 
 for NET in $NETWORKS; do
     NET_PATH="${NET_PATHS[$NET]}"
-    for DISEASE in $DISEASES; do
-        NET_ID="${NET}_${DISEASE}"
-        JOB_NAME="quvine_ppi_${NET_ID}"
-        JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
-        JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
-        JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
-        RESULT_DIR="${OUTPUT_BASE}/results/${NET_ID}"
-        mkdir -p "$RESULT_DIR"
+    HPARAM_JSON="${HPARAM_BASE}/real_${NET}/best_hyperparams.json"
 
-        cat > "$JOB_SH" << BSUBEOF
+    for DISEASE in $DISEASES; do
+        for REP in $(seq -w 0 $((N_REPS-1))); do
+            SEED=$((10#$REP))
+            NET_ID="${NET}_${DISEASE}_rep${REP}"
+            JOB_NAME="ppi4_${NET_ID}"
+            JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+            JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+            JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+            RESULT_DIR="${OUTPUT_BASE}/results/${NET_ID}"
+            mkdir -p "$RESULT_DIR"
+
+            cat > "$JOB_SH" << BSUBEOF
 #!/bin/bash
 #BSUB -J ${JOB_NAME}
 #BSUB -o ${JOB_OUT}
@@ -142,14 +147,34 @@ from quvine.comprehensive_embedding_analysis import run_single_network_analysis
 from quvine.data.subgraph import subsample_nodes
 
 MAX_NODES = ${MAX_NODES}
+SEED      = ${SEED}
 warnings.filterwarnings("ignore")
 
-# ── Load tuned hyperparameters ────────────────────────────────────────────
-with open('${HPARAM_JSON}') as f:
-    all_hparams = json.load(f)
-method_hyperparams = all_hparams['best_params'].get('${NET}', {})
-method_hyperparams.pop('_scores', None)
-print(f'Hyperparameters for ${NET}: {list(method_hyperparams.keys())}')
+# ── Load per-network hyperparameters ─────────────────────────────────────
+hparam_path = '${HPARAM_JSON}'
+try:
+    with open(hparam_path) as f:
+        hp = json.load(f)
+    method_hyperparams = hp['best_params'].get('${NET}', {})
+    method_hyperparams.pop('_scores', None)
+    print(f'Hyperparameters for ${NET}: {list(method_hyperparams.keys())}')
+except FileNotFoundError:
+    method_hyperparams = {}
+    print(f'WARNING: no per-network hparam file at {hparam_path} — using defaults')
+
+# ── Fix ctqw/dtqw: clamp view size so quantum walks always have neighbors ─
+# Tuned hparams had max_nodes=160, max_edges=200, which creates views too
+# sparse for dense PPI subgraphs — root nodes end up with zero neighbors.
+# Override to allow views covering most of the 300-node graph.
+if 'quvine_walks' in method_hyperparams:
+    method_hyperparams['quvine_walks']['max_nodes'] = 250
+    method_hyperparams['quvine_walks']['max_edges'] = 5000
+    print(f'Overrode view constraints: max_nodes=250, max_edges=5000')
+else:
+    # No tuned hparams for walks — inject the fix as a new entry so the
+    # default config also picks it up through the same code path.
+    method_hyperparams['quvine_walks'] = {'max_nodes': 250, 'max_edges': 5000}
+    print('Injected quvine_walks view constraints (no tuned hparams found)')
 
 # ── Load network ──────────────────────────────────────────────────────────
 print('Loading network: ${NET} from ${NET_PATH}')
@@ -166,7 +191,6 @@ G_full = nx.from_pandas_edgelist(df, source='node1', target='node2')
 G_full = nx.convert_node_labels_to_integers(G_full, label_attribute='ncbi_id')
 print(f'Full network: {G_full.number_of_nodes()} nodes, {G_full.number_of_edges()} edges')
 
-# Build ncbi_id -> integer-node mapping on the full graph
 ncbi_to_node = {G_full.nodes[v]['ncbi_id']: v for v in G_full.nodes()}
 
 # ── Load disease seeds and targets ───────────────────────────────────────
@@ -178,17 +202,25 @@ with open(target_path) as f: raw_targets = json.load(f)
 
 seeds_full   = [ncbi_to_node[int(g)] for g in raw_seeds   if int(g) in ncbi_to_node]
 targets_full = [ncbi_to_node[int(g)] for g in raw_targets if int(g) in ncbi_to_node]
-print(f'Disease ${DISEASE}: {len(seeds_full)}/{len(raw_seeds)} seeds in full network, '
+print(f'Disease ${DISEASE}: {len(seeds_full)}/{len(raw_seeds)} seeds, '
       f'{len(targets_full)}/{len(raw_targets)} targets in full network')
 
 if len(seeds_full) == 0 or len(targets_full) == 0:
     print('ERROR: no seeds or targets map into this network — aborting.')
     sys.exit(1)
 
-# ── Subsample network to MAX_NODES around seeds+targets ──────────────────
+# ── Guard: trim if seeds+targets exceed budget (seeds take priority) ──────
+combined = list(dict.fromkeys(seeds_full + targets_full))
+if len(combined) > MAX_NODES:
+    print(f'WARNING: {len(combined)} protected nodes > MAX_NODES={MAX_NODES}. Trimming.')
+    seeds_full   = seeds_full[:MAX_NODES // 2]
+    targets_full = targets_full[:MAX_NODES - len(seeds_full)]
+    print(f'After trim: {len(seeds_full)} seeds, {len(targets_full)} targets')
+
+# ── Subsample network (rep-specific seed) ────────────────────────────────
 if G_full.number_of_nodes() > MAX_NODES:
-    print(f'Subsampling to {MAX_NODES} nodes around disease genes (radius=2) ...')
-    rng = np.random.default_rng(42)
+    print(f'Subsampling to {MAX_NODES} nodes (seed={SEED}) ...')
+    rng = np.random.default_rng(SEED)
     G = subsample_nodes(
         G=G_full,
         seeds=seeds_full,
@@ -197,25 +229,22 @@ if G_full.number_of_nodes() > MAX_NODES:
         radius=2,
         rng=rng,
     )
-    # Relabel nodes 0..n-1, preserving ncbi_id attributes
     G = nx.convert_node_labels_to_integers(G)
-    print(f'Subsampled network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
+    print(f'Subsampled: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
 
-    # Rebuild node mapping on subgraph
     ncbi_to_node_sub = {G.nodes[v].get('ncbi_id'): v
                         for v in G.nodes() if 'ncbi_id' in G.nodes[v]}
     seeds   = [ncbi_to_node_sub[G_full.nodes[s]['ncbi_id']]
-                for s in seeds_full
-                if G_full.nodes[s]['ncbi_id'] in ncbi_to_node_sub]
+               for s in seeds_full
+               if G_full.nodes[s]['ncbi_id'] in ncbi_to_node_sub]
     targets = [ncbi_to_node_sub[G_full.nodes[t]['ncbi_id']]
-                for t in targets_full
-                if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
+               for t in targets_full
+               if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
     print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
 else:
     G = G_full
-    seeds   = seeds_full
-    targets = targets_full
-    print(f'Network small enough ({G.number_of_nodes()} nodes) — no subsampling needed.')
+    seeds, targets = seeds_full, targets_full
+    print(f'Network fits within {MAX_NODES} nodes — no subsampling.')
 
 del G_full
 
@@ -225,12 +254,13 @@ if len(seeds) == 0 or len(targets) == 0:
 
 # ── Metadata ──────────────────────────────────────────────────────────────
 metadata = {
-    'type': 'real_ppi',
-    'network': '${NET}',
-    'disease': '${DISEASE}',
-    'network_id': '${NET_ID}',
-    'seeds': seeds,
-    'targets': targets,
+    'type':              'real_ppi',
+    'network':           '${NET}',
+    'disease':           '${DISEASE}',
+    'network_id':        '${NET_ID}',
+    'replicate':         ${SEED},
+    'seeds':             seeds,
+    'targets':           targets,
     'negative_strategy': 'random',
 }
 
@@ -242,47 +272,48 @@ results = run_single_network_analysis(
     output_dir='${RESULT_DIR}',
     embedding_methods='${METHODS}'.split(','),
     verbose=True,
-    resume=${RESUME^},
+    resume=False,
     method_hyperparams=method_hyperparams,
 )
 
-print(f'Analysis complete for ${NET_ID}')
-print(f'Results saved to: ${RESULT_DIR}')
+print(f'Analysis complete: ${NET_ID}')
+print(f'Results: ${RESULT_DIR}')
 PYEOF
 
 exit \$?
 BSUBEOF
 
-        chmod +x "$JOB_SH"
+            chmod +x "$JOB_SH"
 
-        if [ "$DRY_RUN" = true ]; then
-            echo "  [DRY RUN] Would submit: $JOB_NAME"
-        else
-            JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
-            if [ -n "$JOB_ID" ]; then
-                echo "  Submitted job $JOB_ID: $JOB_NAME"
-                ANALYSIS_JOB_IDS+=("$JOB_ID")
-                JOB_COUNT=$((JOB_COUNT + 1))
+            if [ "$DRY_RUN" = true ]; then
+                echo "  [DRY RUN] $JOB_NAME"
             else
-                echo "  ERROR: Failed to submit $JOB_NAME"
+                JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+                if [ -n "$JOB_ID" ]; then
+                    echo "  Submitted $JOB_ID: $JOB_NAME"
+                    JOB_IDS+=("$JOB_ID")
+                    JOB_COUNT=$((JOB_COUNT + 1))
+                else
+                    echo "  ERROR: failed to submit $JOB_NAME"
+                fi
             fi
-        fi
+        done
     done
 done
 
 echo ""
 echo "======================================================"
-echo " Jobs submitted: $JOB_COUNT / 15"
+echo " Jobs submitted: $JOB_COUNT / $TOTAL_JOBS"
 echo "======================================================"
 
 # ---------------------------------------------------------------------------
-# Aggregation job
+# Aggregation job (depends on all analysis jobs)
 # ---------------------------------------------------------------------------
-AGG_NAME="quvine_ppi_aggregate"
+AGG_NAME="ppi4_aggregate"
 AGG_SH="${LOG_DIR}/${AGG_NAME}.sh"
 
 DEPENDENCY_STRING=""
-for JID in "${ANALYSIS_JOB_IDS[@]}"; do
+for JID in "${JOB_IDS[@]}"; do
     if [ -z "$DEPENDENCY_STRING" ]; then
         DEPENDENCY_STRING="done($JID)"
     else
@@ -296,7 +327,7 @@ cat > "$AGG_SH" << BSUBEOF
 #BSUB -o ${LOG_DIR}/${AGG_NAME}.out
 #BSUB -e ${LOG_DIR}/${AGG_NAME}.err
 #BSUB -q ${QUEUE}
-#BSUB -W 2:00
+#BSUB -W 1:00
 #BSUB -M 16GB
 #BSUB -R "rusage[mem=16GB]"
 $([ -n "$DEPENDENCY_STRING" ] && echo "#BSUB -w \"${DEPENDENCY_STRING}\"")
@@ -304,52 +335,34 @@ $([ -n "$DEPENDENCY_STRING" ] && echo "#BSUB -w \"${DEPENDENCY_STRING}\"")
 source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
 
-echo "================================================"
-echo "Aggregating PPI disease network results"
-echo "================================================"
-
+echo "Aggregating PPI v4 results ..."
 python scripts/collect_hpc_results.py \
     --results-dir ${OUTPUT_BASE}/results \
     --viz-dir     ${OUTPUT_BASE}/visualizations \
-    --n-networks  15
+    --n-networks  ${TOTAL_JOBS}
 
-echo "================================================"
-echo "Aggregation complete"
-echo "Results : ${OUTPUT_BASE}/results/comprehensive_results.csv"
-echo "Plots   : ${OUTPUT_BASE}/visualizations/"
-echo "================================================"
+echo "Done. Results: ${OUTPUT_BASE}/results/comprehensive_results.csv"
 exit \$?
 BSUBEOF
 
 chmod +x "$AGG_SH"
 
 if [ "$DRY_RUN" = true ]; then
+    echo "  [DRY RUN] Aggregation: $AGG_NAME"
+elif [ ${#JOB_IDS[@]} -gt 0 ]; then
     echo ""
-    echo "  [DRY RUN] Would submit aggregation job: $AGG_NAME"
-    [ -n "$DEPENDENCY_STRING" ] && echo "  [DRY RUN] Dependencies: $DEPENDENCY_STRING"
-elif [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
-    echo ""
-    echo "Submitting aggregation job..."
+    echo "Submitting aggregation job ..."
     AGG_ID=$(bsub < "$AGG_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
     if [ -n "$AGG_ID" ]; then
-        echo "  Submitted aggregation job $AGG_ID: $AGG_NAME"
-        echo "  Depends on ${#ANALYSIS_JOB_IDS[@]} analysis jobs"
+        echo "  Submitted aggregation job $AGG_ID (depends on $JOB_COUNT jobs)"
     else
-        echo "  ERROR: Failed to submit aggregation job"
+        echo "  ERROR: failed to submit aggregation job"
     fi
-else
-    echo "No analysis jobs submitted — skipping aggregation job."
 fi
 
 echo ""
 echo "======================================================"
 echo " SUBMISSION COMPLETE"
-echo "======================================================"
-echo " Analysis jobs : $JOB_COUNT"
-if [ "$DRY_RUN" = false ] && [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
-    echo " Aggregation   : 1 (runs after all analysis jobs)"
-    echo ""
-    echo " Monitor:  bjobs -u \$USER"
-    echo " Results:  ${OUTPUT_BASE}/results/"
-fi
+echo " Monitor: bjobs -u \$USER"
+echo " Results: ${OUTPUT_BASE}/results/"
 echo "======================================================"

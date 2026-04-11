@@ -12,10 +12,8 @@ def materialize_undirected_simple_graph(G: nx.Graph) -> nx.Graph:
     This avoids the weird KeyErrors you were seeing with adjacency traversal.
     """
     H = nx.Graph()
-    # nodes()
-    H.add_nodes_from(list(G.nodes()))
-    # edges() - if input is directed/multi, nx.Graph() will collapse direction/multiedges
-    H.add_edges_from(list(G.edges()))
+    H.add_nodes_from(G.nodes(data=True))   # preserve node attributes (e.g. ncbi_id)
+    H.add_edges_from(G.edges(data=True))   # preserve edge attributes
     return H
 
 
@@ -25,10 +23,12 @@ def induce_subgraph_by_nodes(G: nx.Graph, nodes: Set) -> nx.Graph:
     """
     nodes = set(nodes)
     H = nx.Graph()
-    H.add_nodes_from(nodes)
+    H.add_nodes_from((n, G.nodes[n]) for n in nodes)   # preserve node attributes
 
     # Build edges by filtering original edges; safe and view-free
-    H.add_edges_from((u, v) for (u, v) in G.edges() if u in nodes and v in nodes)
+    H.add_edges_from(
+        (u, v, d) for (u, v, d) in G.edges(data=True) if u in nodes and v in nodes
+    )
     return H
 
 
@@ -115,8 +115,9 @@ def subsample_nodes_with_protected(
     """
     G = materialize_undirected_simple_graph(G)
     node_set = set(G.nodes())
-    if len(node_set) > max_nodes: 
-        max_nodes = len(node_set)
+    if len(node_set) <= max_nodes:
+        # Graph already small enough — return as-is
+        return G
     # Normalize protected set
     protected = set(protected or []) & node_set
 
@@ -146,8 +147,8 @@ def subsample_nodes_with_protected(
     H = induce_subgraph_by_nodes(G, keep)
 
     if require_full_budget:
-        assert H.number_of_nodes() == max_nodes, (
-            H.number_of_nodes(), max_nodes
+        assert H.number_of_nodes() >= min(max_nodes, len(node_set)), (
+            H.number_of_nodes(), max_nodes, len(node_set)
         )
 
     return H

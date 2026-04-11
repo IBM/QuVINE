@@ -22,6 +22,7 @@ PARALLELIZATION:
 import os
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import numpy as np
@@ -47,6 +48,7 @@ from quvine.data.random_graphs import (
     get_graph_statistics
 )
 from quvine.complexity.graph import compute_graph_complexity_metrics
+from quvine.complexity.qbc import compute_qbc_metrics
 from quvine.baselines import run_netmf, run_node2vec
 from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.corpus.builder import CorpusBuilder
@@ -401,6 +403,10 @@ class ComprehensiveEmbeddingAnalysis:
         
         logger.info(f"Computing complexity for {network_id}...")
         metrics = compute_graph_complexity_metrics(G)
+        try:
+            metrics.update(compute_qbc_metrics(G))
+        except Exception as _qbc_exc:
+            warnings.warn(f"QBC metrics failed for {network_id}: {_qbc_exc}")
         metrics['network_id'] = network_id
         
         # Determine network type
@@ -2960,7 +2966,8 @@ def run_single_network_analysis(
     # Strip list/dict node+edge attributes first — GraphML does not support them.
     # Skip if already present (resume-safe).
     graphml_path = output_path / f"{network_id}.graphml"
-    if not graphml_path.exists():
+    _graphml_valid = graphml_path.exists() and graphml_path.stat().st_size > 0
+    if not _graphml_valid:
         try:
             nx.write_graphml(_strip_list_attrs(G), str(graphml_path))
             if verbose:
@@ -3003,6 +3010,10 @@ def run_single_network_analysis(
         logger.info("Step 1/4: Computing complexity metrics...")
     
     complexity_metrics = compute_graph_complexity_metrics(G)
+    try:
+        complexity_metrics.update(compute_qbc_metrics(G))
+    except Exception as _qbc_exc:
+        warnings.warn(f"QBC metrics failed for {network_id}: {_qbc_exc}")
     complexity_metrics['network_id'] = network_id
     complexity_metrics['network_type'] = network_metadata.get('type', 'unknown')
     complexity_metrics['n_nodes'] = G.number_of_nodes()

@@ -298,7 +298,7 @@ def main():
     # --- Load or generate graph ---------------------------------------------
     graphml_path = output_path / f"{args.network_id}.graphml"
 
-    if graphml_path.exists():
+    if graphml_path.exists() and graphml_path.stat().st_size > 0:
         print(f"Loading existing graph: {graphml_path}")
         G = nx.read_graphml(str(graphml_path))
         G = nx.convert_node_labels_to_integers(G)
