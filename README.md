@@ -11,7 +11,8 @@
 QuVINE: Quantum-enhanced Multi-View Diffusion for Network Embeddings
 
 <p align="center">
-  <img src="./images/quvine_framework.png" alt="QuVINE" width="420">
+  <img src="./images/quvine_framework.png" alt="QuVINE" width="560"
+  height="320">
 </p>
 
 
