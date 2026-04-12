@@ -72,4 +72,3 @@ __all__ = [
     'QBC_AVAILABLE',
 ]
 
-# Made with Bob

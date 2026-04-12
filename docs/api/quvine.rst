@@ -16,4 +16,3 @@ Core command-line entry point
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

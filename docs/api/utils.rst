@@ -23,4 +23,3 @@ Reusable helpers for logging, I/O, seeding, and general utilities.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

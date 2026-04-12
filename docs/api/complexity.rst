@@ -13,4 +13,3 @@ Graph complexity metrics and QBC-style complexity measures.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

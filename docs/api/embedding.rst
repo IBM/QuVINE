@@ -18,4 +18,3 @@ Embedding generation, registries, and quantum-calibrated filter methods.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

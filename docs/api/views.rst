@@ -13,4 +13,3 @@ View construction and graph transformation utilities.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

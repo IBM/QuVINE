@@ -23,4 +23,3 @@ Classical and quantum walk implementations.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

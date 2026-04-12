@@ -666,4 +666,3 @@ def compute_structural_link_features(
     
     return np.array(features)
 
-# Made with Bob

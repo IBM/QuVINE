@@ -39,4 +39,3 @@ random graph generation, and complexity helpers.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

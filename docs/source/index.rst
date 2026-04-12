@@ -53,4 +53,3 @@ Ready to explore QuVINE?
 
    |ai_note|
 
-.. Made with Bob

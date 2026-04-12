@@ -8,4 +8,3 @@ Complexity-aware orchestration and reporting utilities.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

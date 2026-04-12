@@ -92,4 +92,3 @@ __all__ = [
     'get_qbc_installation_instructions',
 ]
 
-# Made with Bob

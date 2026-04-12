@@ -108,4 +108,3 @@ if __name__ == "__main__":
     success = test_advanced_fusion()
     exit(0 if success else 1)
 
-# Made with Bob

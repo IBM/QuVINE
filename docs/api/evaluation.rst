@@ -18,4 +18,3 @@ Downstream evaluation utilities for ranking, classification, and link prediction
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

@@ -20,4 +20,3 @@ goto end
 :end
 popd
 
-@REM Made with Bob

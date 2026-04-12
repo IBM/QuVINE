@@ -43,4 +43,3 @@ Indices and tables
 * :ref:`modindex`
 * :ref:`search`
 
-.. Made with Bob

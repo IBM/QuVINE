@@ -31,4 +31,3 @@ Package reference
    ../api/utils
    ../api/analysis
 
-.. Made with Bob

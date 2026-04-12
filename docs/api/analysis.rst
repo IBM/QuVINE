@@ -13,4 +13,3 @@ Analysis helpers for result inspection and comparison.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

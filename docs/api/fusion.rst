@@ -8,4 +8,3 @@ Embedding fusion and combination utilities.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob

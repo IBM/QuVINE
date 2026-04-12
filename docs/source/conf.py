@@ -109,4 +109,3 @@ html_sidebars = {
 
 pygments_style = "sphinx"
 
-# Made with Bob

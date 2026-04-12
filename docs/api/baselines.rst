@@ -23,4 +23,3 @@ Classical and hybrid baseline embedding methods.
    :undoc-members:
    :show-inheritance:
 
-.. Made with Bob
