@@ -145,7 +145,7 @@ def compute_algebraic_connectivity(G: nx.Graph) -> float:
     float
         Algebraic connectivity (lambda_2)
     """
-    if not nx.is_connected(G):
+    if G.number_of_nodes() < 2 or not nx.is_connected(G):
         return 0.0
 
     lambda2, _ = fiedler_eigenvalue_sparse(G, normalized=False)
@@ -272,10 +272,11 @@ def compute_estrada_index(G: nx.Graph) -> float:
 
     # Guard against float64 overflow (exp overflows above ~709)
     if eigenvalues.max() > 500:
-        # Use log-sum-exp: log(LEE) = max + log(sum(exp(x - max)))
-        max_val = eigenvalues.max()
-        log_estrada = max_val + np.log(np.sum(np.exp(eigenvalues - max_val)))
-        return float(np.exp(log_estrada))
+        max_val = float(eigenvalues.max())
+        shifted_sum = float(np.sum(np.exp(eigenvalues - max_val)))
+        if max_val + np.log(shifted_sum) >= np.log(np.finfo(np.float64).max):
+            return float("inf")
+        return float(np.exp(max_val) * shifted_sum)
 
     return float(np.sum(np.exp(eigenvalues)))
 
@@ -592,10 +593,14 @@ def compute_laplacian_centrality_complexity(
     # Gini coefficient
     sorted_centrality = np.sort(fiedler_vector)
     n = len(sorted_centrality)
-    index = np.arange(1, n + 1)
-    gini = float(
-        (2 * np.sum(index * sorted_centrality)) / (n * np.sum(sorted_centrality)) - (n + 1) / n
-    )
+    centrality_sum = float(np.sum(sorted_centrality))
+    if n == 0 or centrality_sum <= 0:
+        gini = 0.0
+    else:
+        index = np.arange(1, n + 1)
+        gini = float(
+            (2 * np.sum(index * sorted_centrality)) / (n * centrality_sum) - (n + 1) / n
+        )
 
     centrality_range = float(np.max(fiedler_vector) - np.min(fiedler_vector))
 
@@ -778,7 +783,7 @@ def compute_quantum_advantage_metrics(G: nx.Graph) -> Dict[str, float]:
         metrics['clustering_std'] = 0.0
 
     # 5. Degree heterogeneity (coefficient of variation)
-    degrees = [d for _, d in G.degree()]
+    degrees = [G.degree(node) for node in G.nodes()]
     mean_deg = float(np.mean(degrees)) if degrees else 0.0
     metrics['degree_heterogeneity'] = float(
         np.std(degrees) / mean_deg if mean_deg > 0 else 0.0

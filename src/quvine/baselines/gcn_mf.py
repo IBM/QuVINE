@@ -23,6 +23,9 @@ try:
     import torch.nn.functional as F
     TORCH_AVAILABLE = True
 except ImportError:
+    torch = None
+    nn = None
+    F = None
     TORCH_AVAILABLE = False
 
 
@@ -234,6 +237,9 @@ def precompute_quantum_diffusion(X, L, diffusion_type='heat', t_star=None, poly_
         >>> output = model(X_diffused_heat, adj)  # Fast!
     """
     import scipy.sparse.linalg as spla
+
+    if not TORCH_AVAILABLE:
+        raise ImportError("PyTorch is required for precompute_quantum_diffusion. Install with: pip install torch")
     
     # Convert to numpy if needed
     if isinstance(X, torch.Tensor):
@@ -510,6 +516,9 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     
     # Generate random features for diffusion
     X = np.random.randn(N, embedding_dim).astype(np.float32)
+    row_norms = np.linalg.norm(X, axis=1, keepdims=True)
+    row_norms[row_norms == 0] = 1.0
+    X = X / row_norms
     
     metadata = {
         'diffusion_type': diffusion_type,
@@ -596,19 +605,23 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     n_samples_per_class = min(500, n_edges)  # Sample 500 positive and 500 negative
     
     # Sample positive edges (actual edges in graph)
+    if n_samples_per_class == 0:
+        raise ValueError("GCN-MF training requires at least one edge in the graph.")
     pos_edge_indices = np.random.choice(n_edges, size=n_samples_per_class, replace=False)
     pos_edges = [edges[i] for i in pos_edge_indices]
     
-    # Sample negative edges (non-edges)
-    neg_edges = []
+    # Sample negative edges (non-edges), avoiding duplicates
+    neg_edges = set()
     attempts = 0
-    max_attempts = n_samples_per_class * 10
+    max_attempts = max(n_samples_per_class * 20, 100)
     while len(neg_edges) < n_samples_per_class and attempts < max_attempts:
         u = np.random.randint(0, N)
         v = np.random.randint(0, N)
         if u != v and not G.has_edge(node_list[u], node_list[v]):
-            neg_edges.append((u, v))
+            edge = (u, v) if u < v else (v, u)
+            neg_edges.add(edge)
         attempts += 1
+    neg_edges = list(neg_edges)
     
     # Combine positive and negative samples
     all_edges = [(node_to_idx[u], node_to_idx[v]) for u, v in pos_edges] + neg_edges
@@ -750,9 +763,11 @@ def generate_baseline_gcnmf_embedding(
     torch.manual_seed(random_state)
     
     N = G.number_of_nodes()
+    node_list = list(G.nodes())
+    node_to_idx = {node: idx for idx, node in enumerate(node_list)}
     
     # Get adjacency matrix and normalize
-    A = nx.adjacency_matrix(G)
+    A = nx.adjacency_matrix(G, nodelist=node_list)
     A_norm = normalize_adjacency(A)
     
     # Convert to PyTorch tensors
@@ -760,7 +775,9 @@ def generate_baseline_gcnmf_embedding(
     
     # Generate random input features (no diffusion)
     X = np.random.randn(N, embedding_dim)
-    X = X / np.linalg.norm(X, axis=1, keepdims=True)
+    row_norms = np.linalg.norm(X, axis=1, keepdims=True)
+    row_norms[row_norms == 0] = 1.0
+    X = X / row_norms
     X_torch = torch.FloatTensor(X)
     
     # Create baseline GCNMF model
@@ -781,22 +798,28 @@ def generate_baseline_gcnmf_embedding(
     n_samples_per_class = min(500, n_edges)  # Sample 500 positive and 500 negative
     
     # Sample positive edges (actual edges in graph)
+    if n_samples_per_class == 0:
+        raise ValueError("Baseline GCN-MF training requires at least one edge in the graph.")
     pos_edge_indices = np.random.choice(n_edges, size=n_samples_per_class, replace=False)
     pos_edges = [edges[i] for i in pos_edge_indices]
     
-    # Sample negative edges (non-edges)
-    neg_edges = []
+    # Sample negative edges (non-edges), respecting arbitrary node labels and avoiding duplicates
+    neg_edges = set()
     attempts = 0
-    max_attempts = n_samples_per_class * 10
+    max_attempts = max(n_samples_per_class * 20, 100)
     while len(neg_edges) < n_samples_per_class and attempts < max_attempts:
-        u = np.random.randint(0, N)
-        v = np.random.randint(0, N)
+        u_idx = np.random.randint(0, N)
+        v_idx = np.random.randint(0, N)
+        u = node_list[u_idx]
+        v = node_list[v_idx]
         if u != v and not G.has_edge(u, v):
-            neg_edges.append((u, v))
+            edge = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
+            neg_edges.add(edge)
         attempts += 1
+    neg_edges = list(neg_edges)
     
     # Combine positive and negative samples
-    all_edges = pos_edges + neg_edges
+    all_edges = [(node_to_idx[u], node_to_idx[v]) for u, v in pos_edges] + neg_edges
     all_labels = [1.0] * len(pos_edges) + [0.0] * len(neg_edges)
     
     # Convert to tensors

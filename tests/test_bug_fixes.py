@@ -14,8 +14,8 @@ Author: QuVINE Team
 import numpy as np
 import networkx as nx
 import logging
-from src.quvine.baselines.gcn_mf import generate_quvine_gcnmf_embedding
-from src.quvine.embedding.quantum_filters import calibrate_polynomial_filter
+from quvine.baselines.gcn_mf import generate_quvine_gcnmf_embedding
+from quvine.embedding.quantum_filters import calibrate_polynomial_filter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
