@@ -5,31 +5,33 @@
   <a href="./pyproject.toml"><img alt="pypi package" src="https://img.shields.io/badge/pypi_package-0.1.0-52c41a"></a>
   <a href="./pyproject.toml"><img alt="Python >= 3.10" src="https://img.shields.io/badge/Python-%3E%3D%203.10-0b8ecf"></a>
   <a href="./pyproject.toml"><img alt="Python <= 3.12" src="https://img.shields.io/badge/Python-%3C%3D%203.12-8a5bd6"></a>
-  <a href="./docs/index.rst"><img alt="docs sphinx" src="https://img.shields.io/badge/docs-sphinx-0b8ecf"></a>
+  <a href="https://ibm.github.io/QuVINE/"><img alt="docs sphinx" src="https://img.shields.io/badge/docs-sphinx-0b8ecf"></a>
 </p>
 
 QuVINE: Quantum-enhanced Multi-View Diffusion for Network Embeddings
 
 <p align="center">
-  <img src="./images/quvine_framework.png" alt="QuVINE" width="560"
-  height="320">
+  <img src="./images/quvine_framework.png" alt="QuVINE" width="600"
+  height="400">
 </p>
 
 
 
 **QuVINE** is a framework for **Qu**antum and classical **V**iew-based **N**etwork **E**mbeddings. It supports graph preparation, complexity analysis, quantum and classical walk-based representation learning, embedding fusion, and downstream evaluation for biological and network-science workflows.
 
-The project documentation is organized in a Sphinx-style layout:
-- narrative documentation under `docs/`
-- API reference pages under `docs/api/`
-- documentation entry point at `docs/index.rst`
+The project documentation is organized in a Sphinx website layout:
+- Sphinx source files under `docs/source/`
+- package API reference pages under `docs/api/`
+- existing narrative guides under `docs/`
+- hosted docs target: `https://ibm.github.io/QuVINE/`
 
 ## Documentation
 
-### Sphinx-style entry points
-- **Documentation index**: [`docs/index.rst`](./docs/index.rst)
+### Sphinx website entry points
+- **Hosted docs target**: `https://ibm.github.io/QuVINE/`
+- **Sphinx source index**: [`docs/source/index.rst`](./docs/source/index.rst)
 - **Documentation overview**: [`docs/README.md`](./docs/README.md)
-- **API reference root**: [`docs/api/quvine.rst`](./docs/api/quvine.rst)
+- **API overview page**: [`docs/source/api_overview.rst`](./docs/source/api_overview.rst)
 
 ### Setup
 - [`docs/setup/SETUP_INSTRUCTIONS.md`](./docs/setup/SETUP_INSTRUCTIONS.md)
@@ -133,12 +135,14 @@ Recent repository changes include:
 - targeted bug fixes in graph complexity and GCN-MF utilities
 - graceful optional-import handling for baseline and embedding packages
 - Sphinx-style API reference pages under `docs/api/`
-- streamlined documentation entry point through `docs/index.rst`
+- QBioCode-style Sphinx website structure under `docs/source/`
+- standard Sphinx build entry points via `docs/Makefile` and `docs/make.bat`
 
 ## Notes
 
-- The banner uses `./docs/images/quvine.png` so GitHub-style Markdown renderers resolve it from the repository root.
-- The docs badge links directly to the Sphinx-style documentation entry page at [`docs/index.rst`](./docs/index.rst).
+- The README docs badge now targets the intended hosted documentation URL pattern: `https://ibm.github.io/QuVINE/`.
+- A real documentation webpage requires building and publishing the Sphinx site from `docs/source/` (for example with GitHub Pages).
+- The framework image currently used in the README is `./images/quvine_framework.png`.
 
 ## License
 
