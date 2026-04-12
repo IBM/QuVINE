@@ -1,8 +1,5 @@
 # QuVINE
 
-<p align="center">
-  <img src="./docs/images/quvine.png" alt="QuVINE" width="420">
-</p>
 
 <p align="center">
   <a href="./pyproject.toml"><img alt="pypi package" src="https://img.shields.io/badge/pypi_package-0.1.0-52c41a"></a>
@@ -10,6 +7,14 @@
   <a href="./pyproject.toml"><img alt="Python <= 3.12" src="https://img.shields.io/badge/Python-%3C%3D%203.12-8a5bd6"></a>
   <a href="./docs/index.rst"><img alt="docs sphinx" src="https://img.shields.io/badge/docs-sphinx-0b8ecf"></a>
 </p>
+
+QuVINE: Quantum-enhanced Multi-View Diffusion for Network Embeddings
+
+<p align="center">
+  <img src="./images/quvine_framework.png" alt="QuVINE" width="420">
+</p>
+
+
 
 **QuVINE** is a framework for **Qu**antum and classical **V**iew-based **N**etwork **E**mbeddings. It supports graph preparation, complexity analysis, quantum and classical walk-based representation learning, embedding fusion, and downstream evaluation for biological and network-science workflows.
 
