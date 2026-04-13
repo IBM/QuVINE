@@ -43,7 +43,11 @@ def fuse_embeddings_svd(Zs, k):
     """
     Zcat = np.concatenate(Zs, axis=1)            # (n, sum d_v)
     U, S, _ = svd(Zcat, full_matrices=False)
-    return U[:, :k] * S[:k]                      # (n,k), scaled PCs
+    k_eff = min(k, U.shape[1])
+    Z_fused = U[:, :k_eff] * S[:k_eff]           # (n,k_eff), scaled PCs
+    if k_eff < k:
+        Z_fused = np.pad(Z_fused, ((0, 0), (0, k - k_eff)), mode='constant')
+    return Z_fused
 
 # ---------- Optional: graph-regularized shared U, scalable ----------
 def _apply_graph_regularization(U0, L, beta, lam, max_cg_iter=200, cg_tol=1e-6):
@@ -112,7 +116,11 @@ def fuse_embeddings_attention(Zs, k, temperature=1.0):
     
     # Apply SVD for dimensionality reduction
     U, S, _ = svd(Z_weighted, full_matrices=False)
-    return U[:, :k] * S[:k]
+    k_eff = min(k, U.shape[1])
+    Z_fused = U[:, :k_eff] * S[:k_eff]
+    if k_eff < k:
+        Z_fused = np.pad(Z_fused, ((0, 0), (0, k - k_eff)), mode='constant')
+    return Z_fused
 
 
 def fuse_embeddings_hybrid(Zs, k, L=None, beta=1e-2, lam=1e-2, temperature=1.0):
@@ -173,7 +181,7 @@ def fuse_embeddings_svd_shared_private(Zs, k, gate_type='attention'):
     # 2. Joint SVD over the horizontally concatenated views → rank-k shared reconstruction.
     Z_cat = np.concatenate(Zn, axis=1)          # (n, V*d)
     U, S, Vh = svd(Z_cat, full_matrices=False)
-    k_eff = min(k, Z_cat.shape[1])
+    k_eff = min(k, U.shape[1])
     Z_hat = (U[:, :k_eff] * S[:k_eff]) @ Vh[:k_eff, :]  # (n, V*d)
 
     # 3. Per-view shared and private components.

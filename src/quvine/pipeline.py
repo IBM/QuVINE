@@ -18,7 +18,7 @@ from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.embedding.registry import EmbeddingStore
 from quvine.analysis.compare import compare_embeddings
 from quvine.analysis.analyze import *
-from quvine.baselines import run_node2vec
+from quvine.baselines import run_appnp, run_node2vec
 from quvine.fusion.fuse import fuse_embeddings
 from quvine.evaluation.ranking import (
     seed_centroid_scores,
@@ -187,8 +187,29 @@ class Pipeline:
             time_taken = end_time - beg_time
             if self.cfg.verbose:
                 print(f"Time taken for one node2vec iteration {time_taken/60} minutes")
+
+        if hasattr(self.cfg.baselines, "appnp") and self.cfg.baselines.appnp.enabled:
+            Z_appnp = run_appnp(
+                        graph=graph_data,
+                        nodes=list(graph_data.nodes),
+                        dimensions=self.cfg.baselines.appnp.dimensions,
+                        hidden_dim=self.cfg.baselines.appnp.hidden_dim,
+                        n_layers=self.cfg.baselines.appnp.n_layers,
+                        alpha=self.cfg.baselines.appnp.alpha,
+                        K=self.cfg.baselines.appnp.K,
+                        dropout=self.cfg.baselines.appnp.dropout,
+                        lr=self.cfg.baselines.appnp.lr,
+                        weight_decay=self.cfg.baselines.appnp.weight_decay,
+                        epochs=self.cfg.baselines.appnp.epochs,
+                        seed=self.cfg.baselines.appnp.seed
+                        )
+            store.add("appnp", Z_appnp)
+            end_time = time.time()
+            time_taken = end_time - beg_time
+            if self.cfg.verbose:
+                print(f"Time taken for one APPNP iteration {time_taken/60} minutes")
         
-        if self.cfg.compare_embeddings: 
+        if self.cfg.compare_embeddings:
             # compare embeddings 
             comparison_metrics = compare_embeddings(
                                             store,

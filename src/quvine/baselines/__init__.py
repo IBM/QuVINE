@@ -19,6 +19,12 @@ except ImportError:
     pass
 
 try:
+    from quvine.baselines.appnp import run_appnp, generate_appnp_embedding
+    __all__.extend(["run_appnp", "generate_appnp_embedding"])
+except ImportError:
+    pass
+
+try:
     from quvine.baselines.gcn_mf import (
         GCNMF,
         GCNLayer,

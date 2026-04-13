@@ -49,7 +49,7 @@ from quvine.data.random_graphs import (
 )
 from quvine.complexity.graph import compute_graph_complexity_metrics
 from quvine.complexity.qbc import compute_qbc_metrics
-from quvine.baselines import run_netmf, run_node2vec
+from quvine.baselines import run_appnp, run_netmf, run_node2vec
 from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.corpus.builder import CorpusBuilder
 from quvine.walks.base import BaseWalker
@@ -1245,6 +1245,40 @@ class ComprehensiveEmbeddingAnalysis:
                     seed=self.base_seed,
                 )
 
+        elif method_name == 'appnp':
+            if method_hyperparams and 'appnp' in method_hyperparams:
+                hp = method_hyperparams['appnp']
+                logger.info(f"Using best-tuned APPNP hyperparameters: {hp}")
+                return run_appnp(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=hp.get('dimensions', self.embedding_dim),
+                    hidden_dim=hp.get('hidden_dim', 64),
+                    n_layers=hp.get('n_layers', 2),
+                    alpha=hp.get('alpha', 0.1),
+                    K=hp.get('K', 10),
+                    dropout=hp.get('dropout', 0.5),
+                    lr=hp.get('lr', 0.01),
+                    weight_decay=hp.get('weight_decay', 5e-4),
+                    epochs=hp.get('epochs', 200),
+                    seed=self.base_seed
+                )
+            else:
+                return run_appnp(
+                    graph=G,
+                    nodes=nodes,
+                    dimensions=self.embedding_dim,
+                    hidden_dim=64,
+                    n_layers=2,
+                    alpha=0.1,
+                    K=10,
+                    dropout=0.5,
+                    lr=0.01,
+                    weight_decay=5e-4,
+                    epochs=200,
+                    seed=self.base_seed
+                )
+
         elif method_name == 'baseline_gcnmf':
             if method_hyperparams and 'baseline_gcnmf' in method_hyperparams:
                 hp = method_hyperparams['baseline_gcnmf']
@@ -1351,6 +1385,7 @@ class ComprehensiveEmbeddingAnalysis:
                 'quvine_fused-walk':  ('attention',       ['rwr', 'ctqw', 'dtqw'],  'attention'),
                 'quvine_fused-filt':  ('svd_shared_priv', ['heat', 'poly'],          'attention'),
                 'quvine_fused-gcnmf': ('svd_shared_priv', ['hgcnmf', 'pgcnmf'],     'moe'),
+                'quvine_fused_all':   ('all',             ['ctqw', 'dtqw', 'rwr', 'heat', 'poly', 'hgcnmf', 'pgcnmf'], 'attention'),
             }
 
             if method_name in _NAMED_FUSED:
@@ -2059,7 +2094,7 @@ class ComprehensiveEmbeddingAnalysis:
             'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
             'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
             'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
-            'netmf', 'node2vec'                                    # Other baselines
+            'netmf', 'node2vec', 'appnp'                           # Other baselines
         ]
         
         ranking_results = []
@@ -2124,7 +2159,7 @@ class ComprehensiveEmbeddingAnalysis:
             'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
             'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
             'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
-            'netmf', 'node2vec'                                    # Other baselines
+            'netmf', 'node2vec', 'appnp'                           # Other baselines
         ]
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")
@@ -2956,7 +2991,7 @@ def run_single_network_analysis(
             'quvine_heat', 'quvine_poly', 'quvine_fused-filt',
             'quvine_hgcnmf', 'quvine_pgcnmf', 'quvine_fused-gcnmf',
             'node2vec', 'netmf', 'baseline_filter', 'baseline_gcnmf',
-            'graphsage',
+            'graphsage', 'appnp',
         ]
 
     output_path = Path(output_dir)
