@@ -1,0 +1,160 @@
+# APPNP Baseline - Completed Networks in hard_negatives_v4
+
+## Summary
+- Total networks: 480
+- Completed: 120 (25.0%)
+- Remaining: 360 (75.0%)
+
+## Completed Networks (120)
+
+All NC1_erdos_renyi_rand replicates (30):
+NC1_erdos_renyi_rand_rep00
+NC1_erdos_renyi_rand_rep01
+NC1_erdos_renyi_rand_rep02
+NC1_erdos_renyi_rand_rep03
+NC1_erdos_renyi_rand_rep04
+NC1_erdos_renyi_rand_rep05
+NC1_erdos_renyi_rand_rep06
+NC1_erdos_renyi_rand_rep07
+NC1_erdos_renyi_rand_rep08
+NC1_erdos_renyi_rand_rep09
+NC1_erdos_renyi_rand_rep10
+NC1_erdos_renyi_rand_rep11
+NC1_erdos_renyi_rand_rep12
+NC1_erdos_renyi_rand_rep13
+NC1_erdos_renyi_rand_rep14
+NC1_erdos_renyi_rand_rep15
+NC1_erdos_renyi_rand_rep16
+NC1_erdos_renyi_rand_rep17
+NC1_erdos_renyi_rand_rep18
+NC1_erdos_renyi_rand_rep19
+NC1_erdos_renyi_rand_rep20
+NC1_erdos_renyi_rand_rep21
+NC1_erdos_renyi_rand_rep22
+NC1_erdos_renyi_rand_rep23
+NC1_erdos_renyi_rand_rep24
+NC1_erdos_renyi_rand_rep25
+NC1_erdos_renyi_rand_rep26
+NC1_erdos_renyi_rand_rep27
+NC1_erdos_renyi_rand_rep28
+NC1_erdos_renyi_rand_rep29
+
+All NC2_erdos_renyi_2hop replicates (30):
+NC2_erdos_renyi_2hop_rep00
+NC2_erdos_renyi_2hop_rep01
+NC2_erdos_renyi_2hop_rep02
+NC2_erdos_renyi_2hop_rep03
+NC2_erdos_renyi_2hop_rep04
+NC2_erdos_renyi_2hop_rep05
+NC2_erdos_renyi_2hop_rep06
+NC2_erdos_renyi_2hop_rep07
+NC2_erdos_renyi_2hop_rep08
+NC2_erdos_renyi_2hop_rep09
+NC2_erdos_renyi_2hop_rep10
+NC2_erdos_renyi_2hop_rep11
+NC2_erdos_renyi_2hop_rep12
+NC2_erdos_renyi_2hop_rep13
+NC2_erdos_renyi_2hop_rep14
+NC2_erdos_renyi_2hop_rep15
+NC2_erdos_renyi_2hop_rep16
+NC2_erdos_renyi_2hop_rep17
+NC2_erdos_renyi_2hop_rep18
+NC2_erdos_renyi_2hop_rep19
+NC2_erdos_renyi_2hop_rep20
+NC2_erdos_renyi_2hop_rep21
+NC2_erdos_renyi_2hop_rep22
+NC2_erdos_renyi_2hop_rep23
+NC2_erdos_renyi_2hop_rep24
+NC2_erdos_renyi_2hop_rep25
+NC2_erdos_renyi_2hop_rep26
+NC2_erdos_renyi_2hop_rep27
+NC2_erdos_renyi_2hop_rep28
+NC2_erdos_renyi_2hop_rep29
+
+All NC3_ws_high_p replicates (30):
+NC3_ws_high_p_rep00
+NC3_ws_high_p_rep01
+NC3_ws_high_p_rep02
+NC3_ws_high_p_rep03
+NC3_ws_high_p_rep04
+NC3_ws_high_p_rep05
+NC3_ws_high_p_rep06
+NC3_ws_high_p_rep07
+NC3_ws_high_p_rep08
+NC3_ws_high_p_rep09
+NC3_ws_high_p_rep10
+NC3_ws_high_p_rep11
+NC3_ws_high_p_rep12
+NC3_ws_high_p_rep13
+NC3_ws_high_p_rep14
+NC3_ws_high_p_rep15
+NC3_ws_high_p_rep16
+NC3_ws_high_p_rep17
+NC3_ws_high_p_rep18
+NC3_ws_high_p_rep19
+NC3_ws_high_p_rep20
+NC3_ws_high_p_rep21
+NC3_ws_high_p_rep22
+NC3_ws_high_p_rep23
+NC3_ws_high_p_rep24
+NC3_ws_high_p_rep25
+NC3_ws_high_p_rep26
+NC3_ws_high_p_rep27
+NC3_ws_high_p_rep28
+NC3_ws_high_p_rep29
+
+All NC4_random_geometric replicates (30):
+NC4_random_geometric_rep00
+NC4_random_geometric_rep01
+NC4_random_geometric_rep02
+NC4_random_geometric_rep03
+NC4_random_geometric_rep04
+NC4_random_geometric_rep05
+NC4_random_geometric_rep06
+NC4_random_geometric_rep07
+NC4_random_geometric_rep08
+NC4_random_geometric_rep09
+NC4_random_geometric_rep10
+NC4_random_geometric_rep11
+NC4_random_geometric_rep12
+NC4_random_geometric_rep13
+NC4_random_geometric_rep14
+NC4_random_geometric_rep15
+NC4_random_geometric_rep16
+NC4_random_geometric_rep17
+NC4_random_geometric_rep18
+NC4_random_geometric_rep19
+NC4_random_geometric_rep20
+NC4_random_geometric_rep21
+NC4_random_geometric_rep22
+NC4_random_geometric_rep23
+NC4_random_geometric_rep24
+NC4_random_geometric_rep25
+NC4_random_geometric_rep26
+NC4_random_geometric_rep27
+NC4_random_geometric_rep28
+NC4_random_geometric_rep29
+
+## Remaining Network Types (360 networks)
+
+The following network types still need APPNP baseline (30 replicates each):
+- QW1_modular_strong (30 networks)
+- QW2_modular_medium (30 networks)
+- QW3_scale_free_2hop (30 networks)
+- QW4_scale_free_comm (30 networks)
+- QW5_core_periphery (30 networks)
+- QW6_ws_low_p (30 networks)
+- QW7_modular_many_comm (30 networks)
+- QW8_sbm_assortative (30 networks)
+- QW9_powerlaw_cluster (30 networks)
+- RN1_karate_club (30 networks)
+- RN2_les_miserables (30 networks)
+- RN3_polbooks (30 networks)
+
+## Notes
+
+- The local sequential run completed all 4 NC (Negative Control) cases
+- All QW (Quantum Wins) and RN (Real Network) cases remain pending
+- When submitting LSF jobs with --resume, these 120 completed networks will be automatically skipped
+- comprehensive_results.csv has NOT been regenerated yet (APPNP rows = 0)
+- After all networks complete, run aggregation to add APPNP to comprehensive_results.csv

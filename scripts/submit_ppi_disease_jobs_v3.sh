@@ -213,8 +213,17 @@ if len(combined) > MAX_NODES:
 
 # ── Subsample network (rep-specific seed) ────────────────────────────────
 if G_full.number_of_nodes() > MAX_NODES:
-    print(f'Subsampling to {MAX_NODES} nodes (seed={SEED}) ...')
+    print(f'Subsampling to {MAX_NODES} nodes (seed={SEED}) with holistic degree matching ...')
     rng = np.random.default_rng(SEED)
+
+    full_degree_values = np.fromiter((deg for _, deg in G_full.degree()), dtype=int)
+    print(
+        'Full-graph degree stats: '
+        f'mean={full_degree_values.mean():.2f}, '
+        f'median={np.median(full_degree_values):.2f}, '
+        f'max={full_degree_values.max()}'
+    )
+
     G = subsample_nodes(
         G=G_full,
         seeds=seeds_full,
@@ -222,9 +231,20 @@ if G_full.number_of_nodes() > MAX_NODES:
         max_nodes=MAX_NODES,
         radius=2,
         rng=rng,
+        degree_matched_fill=True,
+        degree_matched_trim=True,
+        degree_reference_nodes=list(G_full.nodes()),
     )
     G = nx.convert_node_labels_to_integers(G)
     print(f'Subsampled: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
+
+    sub_degree_values = np.fromiter((deg for _, deg in G.degree()), dtype=int)
+    print(
+        'Subgraph degree stats: '
+        f'mean={sub_degree_values.mean():.2f}, '
+        f'median={np.median(sub_degree_values):.2f}, '
+        f'max={sub_degree_values.max()}'
+    )
 
     ncbi_to_node_sub = {G.nodes[v].get('ncbi_id'): v
                         for v in G.nodes() if 'ncbi_id' in G.nodes[v]}
@@ -233,6 +253,8 @@ if G_full.number_of_nodes() > MAX_NODES:
                if G_full.nodes[s]['ncbi_id'] in ncbi_to_node_sub]
     targets = [ncbi_to_node_sub[G_full.nodes[t]['ncbi_id']]
                for t in targets_full
+               if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
+    print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
                if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
     print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
 else:

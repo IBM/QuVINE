@@ -49,7 +49,23 @@ from quvine.data.random_graphs import (
 )
 from quvine.complexity.graph import compute_graph_complexity_metrics
 from quvine.complexity.qbc import compute_qbc_metrics
-from quvine.baselines import run_appnp, run_netmf, run_node2vec
+
+# Import baselines with fallback for missing dependencies
+try:
+    from quvine.baselines import run_appnp
+except ImportError:
+    run_appnp = None
+
+try:
+    from quvine.baselines import run_netmf
+except ImportError:
+    run_netmf = None
+
+try:
+    from quvine.baselines import run_node2vec
+except ImportError:
+    run_node2vec = None
+
 from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.corpus.builder import CorpusBuilder
 from quvine.walks.base import BaseWalker
