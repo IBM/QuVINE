@@ -29,7 +29,7 @@ MEMORY="12"
 SEED_PCT="10"
 TARGET_PCT="10"
 DRY_RUN=false
-PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
+PYTHON_ENV="/u/futro/envs/py311/bin/activate"
 METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter,graphsage"
 
 # Data paths (on HPC system where data resides)
@@ -57,6 +57,11 @@ while [[ $# -gt 0 ]]; do
             exit 1 ;;
     esac
 done
+
+# Expand tilde in paths
+PYTHON_ENV="${PYTHON_ENV/#\~/$HOME}"
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+OUTPUT_BASE="${OUTPUT_BASE/#\~/$HOME}"
 
 # ---------------------------------------------------------------------------
 # Paths
