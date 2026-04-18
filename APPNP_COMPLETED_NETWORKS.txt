@@ -1,13 +1,14 @@
 # APPNP Baseline - Completed Networks in hard_negatives_v4
+# Updated: 2026-04-14
 
 ## Summary
-- Total networks: 480
-- Completed: 120 (25.0%)
-- Remaining: 360 (75.0%)
+- Total networks: 479 (one graphml file appears to be missing)
+- Completed: 119 (24.8%)
+- Remaining: 360 (75.2%)
 
-## Completed Networks (120)
+## Completed Networks by Case (119 total)
 
-All NC1_erdos_renyi_rand replicates (30):
+### NC1_erdos_renyi_rand: 30/30 replicates ✓ COMPLETE
 NC1_erdos_renyi_rand_rep00
 NC1_erdos_renyi_rand_rep01
 NC1_erdos_renyi_rand_rep02
@@ -39,11 +40,10 @@ NC1_erdos_renyi_rand_rep27
 NC1_erdos_renyi_rand_rep28
 NC1_erdos_renyi_rand_rep29
 
-All NC2_erdos_renyi_2hop replicates (30):
+### NC2_erdos_renyi_2hop: 29/30 replicates (MISSING: rep03)
 NC2_erdos_renyi_2hop_rep00
 NC2_erdos_renyi_2hop_rep01
 NC2_erdos_renyi_2hop_rep02
-NC2_erdos_renyi_2hop_rep03
 NC2_erdos_renyi_2hop_rep04
 NC2_erdos_renyi_2hop_rep05
 NC2_erdos_renyi_2hop_rep06
@@ -71,7 +71,7 @@ NC2_erdos_renyi_2hop_rep27
 NC2_erdos_renyi_2hop_rep28
 NC2_erdos_renyi_2hop_rep29
 
-All NC3_ws_high_p replicates (30):
+### NC3_ws_high_p: 30/30 replicates ✓ COMPLETE
 NC3_ws_high_p_rep00
 NC3_ws_high_p_rep01
 NC3_ws_high_p_rep02
@@ -103,7 +103,7 @@ NC3_ws_high_p_rep27
 NC3_ws_high_p_rep28
 NC3_ws_high_p_rep29
 
-All NC4_random_geometric replicates (30):
+### NC4_random_geometric: 30/30 replicates ✓ COMPLETE
 NC4_random_geometric_rep00
 NC4_random_geometric_rep01
 NC4_random_geometric_rep02
@@ -138,23 +138,24 @@ NC4_random_geometric_rep29
 ## Remaining Network Types (360 networks)
 
 The following network types still need APPNP baseline (30 replicates each):
-- QW1_modular_strong (30 networks)
-- QW2_modular_medium (30 networks)
-- QW3_scale_free_2hop (30 networks)
-- QW4_scale_free_comm (30 networks)
-- QW5_core_periphery (30 networks)
-- QW6_ws_low_p (30 networks)
-- QW7_modular_many_comm (30 networks)
-- QW8_sbm_assortative (30 networks)
-- QW9_powerlaw_cluster (30 networks)
-- RN1_karate_club (30 networks)
-- RN2_les_miserables (30 networks)
-- RN3_polbooks (30 networks)
+- QW1_modular_strong (30 networks) - 0% complete
+- QW2_modular_medium (30 networks) - 0% complete
+- QW3_scale_free_2hop (30 networks) - 0% complete
+- QW4_scale_free_comm (30 networks) - 0% complete
+- QW5_core_periphery (30 networks) - 0% complete
+- QW6_ws_low_p (30 networks) - 0% complete
+- QW7_modular_many_comm (30 networks) - 0% complete
+- QW8_sbm_assortative (30 networks) - 0% complete
+- QW9_powerlaw_cluster (30 networks) - 0% complete
+- RN1_karate_club (30 networks) - 0% complete
+- RN2_les_miserables (30 networks) - 0% complete
+- RN3_polbooks (30 networks) - 0% complete
 
 ## Notes
 
-- The local sequential run completed all 4 NC (Negative Control) cases
-- All QW (Quantum Wins) and RN (Real Network) cases remain pending
-- When submitting LSF jobs with --resume, these 120 completed networks will be automatically skipped
-- comprehensive_results.csv has NOT been regenerated yet (APPNP rows = 0)
-- After all networks complete, run aggregation to add APPNP to comprehensive_results.csv
+- **All running jobs stopped** - No APPNP processes currently running
+- **NC cases mostly complete** - 3 out of 4 NC cases are 100% complete
+- **Missing network** - NC2_erdos_renyi_2hop_rep03 appears to be missing its graphml file
+- **comprehensive_results.csv NOT updated** - The 119 completed networks are saved individually but not yet aggregated
+- **LSF submission ready** - Use `--resume` flag to skip these 119 completed networks
+- **Remaining work** - 360 networks (all QW and RN cases) + 1 missing NC2 network = 361 networks to process
