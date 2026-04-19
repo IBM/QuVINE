@@ -19,7 +19,7 @@ set -e
 # Defaults
 # ---------------------------------------------------------------------------
 QUEUE="normal"
-WALLTIME="1:00"
+WALLTIME="12:00"
 MEMORY="8"
 DRY_RUN=false
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
@@ -46,7 +46,7 @@ done
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-RESULTS_BASE="/dccstor/boseukb/Q/NetMed/quvine/ppi_disease_v3/results"
+RESULTS_BASE="/dccstor/boseukb/Q/NetMed/QuVINE/results/ppi_disease_v3/results"
 LOG_DIR="${RESULTS_BASE}/logs_topology"
 
 mkdir -p "$LOG_DIR"

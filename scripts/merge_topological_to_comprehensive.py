@@ -14,9 +14,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Paths
-RESULTS_DIR = Path("/dccstor/boseukb/Q/NetMed/quvine/ppi_disease_v3/results")
-COMPREHENSIVE_CSV = RESULTS_DIR / "comprehensive_results_ppi3.csv"
-OUTPUT_CSV = RESULTS_DIR / "comprehensive_results_ppi3_with_topology.csv"
+RESULTS_DIR = Path("/dccstor/boseukb/Q/NetMed/QuVINE/results/ppi_disease_v3/results")
+COMPREHENSIVE_CSV = RESULTS_DIR / "comprehensive_results.csv"
+OUTPUT_CSV = RESULTS_DIR / "comprehensive_results_with_topology.csv"
 
 def main():
     print("="*80)
