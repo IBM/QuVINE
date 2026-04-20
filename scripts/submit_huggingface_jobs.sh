@@ -58,6 +58,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Expand tilde in paths
+PYTHON_ENV="${PYTHON_ENV/#\~/$HOME}"
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+OUTPUT_BASE="${OUTPUT_BASE/#\~/$HOME}"
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ set -e
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 QUEUE="normal"
-WALLTIME="2:00"
+WALLTIME="12:00"
 MEMORY="8"
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
 RESUME=false
