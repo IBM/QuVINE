@@ -90,12 +90,17 @@ mkdir -p "$LOG_DIR" "${OUTPUT_BASE}/results"
 # ---------------------------------------------------------------------------
 # Network definitions
 # ---------------------------------------------------------------------------
-declare -A NET_PATHS
-NET_PATHS["STRING"]="${DATA_ROOT}/networks/STRING/edges_list_ncbi.csv"
-NET_PATHS["BioPlex3"]="${DATA_ROOT}/networks/BioPlex3_shared/edges_list_ncbi.csv"
-NET_PATHS["HumanNet"]="${DATA_ROOT}/networks/HumanNetV3/edges_list_ncbi.csv"
-NET_PATHS["PCNet"]="${DATA_ROOT}/networks/PCNet/edges_list_ncbi.csv"
-NET_PATHS["ProteomeHD"]="${DATA_ROOT}/networks/ProteomeHD/edges_list_ncbi.csv"
+# Function to get network path
+get_network_path() {
+    case "$1" in
+        STRING)     echo "${DATA_ROOT}/networks/STRING/edges_list_ncbi.csv" ;;
+        BioPlex3)   echo "${DATA_ROOT}/networks/BioPlex3_shared/edges_list_ncbi.csv" ;;
+        HumanNet)   echo "${DATA_ROOT}/networks/HumanNetV3/edges_list_ncbi.csv" ;;
+        PCNet)      echo "${DATA_ROOT}/networks/PCNet/edges_list_ncbi.csv" ;;
+        ProteomeHD) echo "${DATA_ROOT}/networks/ProteomeHD/edges_list_ncbi.csv" ;;
+        *)          echo "" ;;
+    esac
+}
 
 NETWORKS="STRING BioPlex3 HumanNet PCNet ProteomeHD"
 DISEASES="asthma autism schizophrenia"
@@ -134,11 +139,17 @@ JOB_IDS=()
 JOB_COUNT=0
 
 for NET in $NETWORKS; do
-    NET_PATH="${NET_PATHS[$NET]}"
+    NET_PATH="$(get_network_path $NET)"
     HPARAM_JSON="${HPARAM_BASE}/real_${NET}/best_hyperparams.json"
     
     # Get node counts for this network
     NET_NODE_COUNTS="$(get_node_counts $NET)"
+    
+    # Skip if no node counts (e.g., ProteomeHD already done)
+    if [ -z "$NET_NODE_COUNTS" ]; then
+        echo "Skipping $NET (already complete at 2000 nodes)"
+        continue
+    fi
 
     for MAX_NODES in $NET_NODE_COUNTS; do
         for DISEASE in $DISEASES; do
@@ -277,8 +288,6 @@ if G_full.number_of_nodes() > MAX_NODES:
                if G_full.nodes[s]['ncbi_id'] in ncbi_to_node_sub]
     targets = [ncbi_to_node_sub[G_full.nodes[t]['ncbi_id']]
                for t in targets_full
-               if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
-    print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
                if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
     print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
 else:
