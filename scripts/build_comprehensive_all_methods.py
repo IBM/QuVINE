@@ -1,193 +1,195 @@
 #!/usr/bin/env python3
 """
-Build comprehensive results CSV with all methods (baselines + APPNP).
-
-Output (long format, one row per network × method):
-  - Classification metrics: all 14 methods from node_embedding.csv
-  - Ranking metrics: appnp only (others were overwritten)
-  - Link prediction metrics: appnp only (others were overwritten)
-  - Network-level graph + topology features: broadcast from complexity.csv
+Build comprehensive results with proper aggregation for all methods.
+This script aggregates classification, link prediction, and ranking results
+with all the statistics that were missing in the PPI dataset.
 """
 
-import glob
-from pathlib import Path
 import pandas as pd
-import warnings
+import numpy as np
+from pathlib import Path
+import glob
+import os
 
-warnings.filterwarnings("ignore")
 
-RESULTS_DIR = Path("/dccstor/boseukb/Q/NetMed/QuVINE/results/ppi_disease_v3/results")
-OUTPUT_CSV  = RESULTS_DIR / "comprehensive_results_all_methods.csv"
+def build_comprehensive_all_methods(
+    results_dir: str,
+    output_file: str = "comprehensive_results_all_ppi.csv"
+):
+    """
+    Build comprehensive results with proper aggregation including:
+    - Classification accuracy per strategy
+    - Classification min/max stats
+    - Link prediction min stats
+    - Link prediction negative_strategy column
+    """
+    
+    print("="*80)
+    print("BUILDING COMPREHENSIVE RESULTS WITH ALL METHODS")
+    print(f"Results directory: {results_dir}")
+    print("="*80)
+    
+    results_path = Path(results_dir)
+    all_results = []
+    
+    # Find all network directories
+    network_dirs = [d for d in results_path.iterdir() if d.is_dir()]
+    print(f"\nFound {len(network_dirs)} network directories")
+    
+    for network_dir in sorted(network_dirs):
+        network_id = network_dir.name
+        print(f"\nProcessing: {network_id}")
+        
+        try:
+            # Load complexity metrics
+            complexity_files = list(network_dir.glob("*_complexity.csv"))
+            if not complexity_files:
+                print(f"  ⚠ No complexity file found")
+                continue
+            
+            complexity_df = pd.read_csv(complexity_files[0])
+            complexity_dict = complexity_df.iloc[0].to_dict()
+            
+            # Load classification results
+            classification_files = list(network_dir.glob("*_classification_results.csv"))
+            classification_df = pd.read_csv(classification_files[0]) if classification_files else pd.DataFrame()
+            
+            # Load link prediction results  
+            link_pred_files = list(network_dir.glob("*_link_prediction_results.csv"))
+            link_pred_df = pd.read_csv(link_pred_files[0]) if link_pred_files else pd.DataFrame()
+            
+            # Load ranking results
+            ranking_files = list(network_dir.glob("*_ranking_results.csv"))
+            ranking_df = pd.read_csv(ranking_files[0]) if ranking_files else pd.DataFrame()
+            
+            # Get all unique methods
+            methods = set()
+            if not classification_df.empty:
+                methods.update(classification_df['method'].unique())
+            if not link_pred_df.empty:
+                methods.update(link_pred_df['method'].unique())
+            if not ranking_df.empty:
+                methods.update(ranking_df['method'].unique())
+            
+            # Process classification results - data is already aggregated!
+            clf_aggregated = {}
+            if not classification_df.empty:
+                # The data is already aggregated per method, just rename columns
+                clf_aggregated = classification_df.copy()
+                # Rename columns to add classification_ prefix
+                clf_aggregated.columns = [
+                    'method' if col == 'method' else
+                    'network_id' if col == 'network_id' else
+                    f'classification_{col}'
+                    for col in clf_aggregated.columns
+                ]
+                # Drop network_id as we'll add it later
+                if 'classification_network_id' in clf_aggregated.columns:
+                    clf_aggregated = clf_aggregated.drop(columns=['classification_network_id'])
+            
+            # Process link prediction results - data is already aggregated!
+            lp_aggregated = {}
+            if not link_pred_df.empty:
+                # The data is already aggregated per method, just rename columns
+                lp_aggregated = link_pred_df.copy()
+                # Rename columns to add link_prediction_ prefix
+                lp_aggregated.columns = [
+                    'method' if col == 'method' else
+                    'network_id' if col == 'network_id' else
+                    f'link_prediction_{col}'
+                    for col in lp_aggregated.columns
+                ]
+                # Drop network_id as we'll add it later
+                if 'link_prediction_network_id' in lp_aggregated.columns:
+                    lp_aggregated = lp_aggregated.drop(columns=['link_prediction_network_id'])
+            
+            # Process ranking results
+            ranking_aggregated = {}
+            if not ranking_df.empty:
+                ranking_aggregated = ranking_df.copy()
+                # Rename columns to have ranking_ prefix
+                ranking_aggregated.columns = ['method' if col == 'method' else f'ranking_{col}' 
+                                             for col in ranking_aggregated.columns]
+            
+            # Create one row per method
+            for method in methods:
+                row_data = complexity_dict.copy()
+                row_data['method'] = method
+                row_data['network_id'] = network_id
+                
+                # Add classification data
+                if isinstance(clf_aggregated, pd.DataFrame) and not clf_aggregated.empty:
+                    method_clf = clf_aggregated[clf_aggregated['method'] == method]
+                    if not method_clf.empty:
+                        for col in method_clf.columns:
+                            if col != 'method':
+                                row_data[col] = method_clf.iloc[0][col]
+                
+                # Add link prediction data
+                if isinstance(lp_aggregated, pd.DataFrame) and not lp_aggregated.empty:
+                    method_lp = lp_aggregated[lp_aggregated['method'] == method]
+                    if not method_lp.empty:
+                        for col in method_lp.columns:
+                            if col != 'method':
+                                row_data[col] = method_lp.iloc[0][col]
+                
+                # Add ranking data
+                if isinstance(ranking_aggregated, pd.DataFrame) and not ranking_aggregated.empty:
+                    method_rank = ranking_aggregated[ranking_aggregated['method'] == method]
+                    if not method_rank.empty:
+                        for col in method_rank.columns:
+                            if col != 'method':
+                                row_data[col] = method_rank.iloc[0][col]
+                
+                all_results.append(row_data)
+            
+            print(f"  ✓ Processed {len(methods)} methods")
+            
+        except Exception as e:
+            print(f"  ✗ Error processing {network_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Create DataFrame
+    if not all_results:
+        print("\n⚠ No results collected!")
+        return pd.DataFrame()
+    
+    results_df = pd.DataFrame(all_results)
+    
+    # Save
+    output_path = results_path / output_file
+    results_df.to_csv(output_path, index=False)
+    
+    print("\n" + "="*80)
+    print("RESULTS SUMMARY")
+    print("="*80)
+    print(f"Total rows: {len(results_df)}")
+    print(f"Total columns: {len(results_df.columns)}")
+    print(f"Unique networks: {results_df['network_id'].nunique()}")
+    print(f"Unique methods: {results_df['method'].nunique()}")
+    print(f"\nSaved to: {output_path}")
+    print("="*80)
+    
+    return results_df
 
-print("=" * 80)
-print(" Building Comprehensive Results — All Methods")
-print("=" * 80)
 
-# ---------------------------------------------------------------------------
-# 1. Network-level features from complexity.csv
-# ---------------------------------------------------------------------------
-print("\n[1/4] Reading network-level features from complexity.csv ...")
-complexity_frames = []
-for f in sorted(glob.glob(str(RESULTS_DIR / "*" / "*_complexity.csv"))):
-    try:
-        complexity_frames.append(pd.read_csv(f))
-    except Exception as e:
-        print(f"  WARN: {f}: {e}")
+if __name__ == '__main__':
+    import sys
+    
+    # Default path
+    results_dir = '/Users/aritrabose/OneDrive - IBM/Research/Quantum/quvine/ppi_disease_v3/results'
+    
+    # Allow command line override
+    if len(sys.argv) > 1:
+        results_dir = sys.argv[1]
+    
+    df = build_comprehensive_all_methods(results_dir)
+    
+    if not df.empty:
+        print("\nColumn names:")
+        for col in sorted(df.columns):
+            print(f"  - {col}")
 
-complexity_df = pd.concat(complexity_frames, ignore_index=True)
-# De-duplicate: keep last (post-topology update)
-complexity_df = complexity_df.drop_duplicates(subset=["network_id"], keep="last")
-print(f"  Network features: {complexity_df.shape[0]} networks, {complexity_df.shape[1]} columns")
-
-# ---------------------------------------------------------------------------
-# 2. Classification results from node_embedding.csv (all methods)
-# ---------------------------------------------------------------------------
-print("\n[2/4] Reading classification results from node_embedding.csv ...")
-nc_frames = []
-for f in sorted(glob.glob(str(RESULTS_DIR / "*" / "*_node_embedding.csv"))):
-    try:
-        nc_frames.append(pd.read_csv(f))
-    except Exception as e:
-        print(f"  WARN: {f}: {e}")
-
-nc_raw = pd.concat(nc_frames, ignore_index=True)
-print(f"  Raw rows: {len(nc_raw):,}  |  Methods: {sorted(nc_raw['method'].unique())}")
-
-# Aggregate over label strategies per (network_id, method)
-nc_agg = (
-    nc_raw
-    .groupby(["network_id", "method"])
-    .agg(
-        clf_mean_f1_macro   =("f1_macro",  "mean"),
-        clf_std_f1_macro    =("f1_macro",  "std"),
-        clf_max_f1_macro    =("f1_macro",  "max"),
-        clf_mean_accuracy   =("accuracy",  "mean"),
-        clf_std_accuracy    =("accuracy",  "std"),
-        clf_n_strategies    =("f1_macro",  "count"),
-    )
-    .reset_index()
-)
-
-# Per-strategy f1 pivot (wide columns like clf_f1_community_louvain)
-strategy_pivot = nc_raw.pivot_table(
-    index=["network_id", "method"],
-    columns="label_strategy",
-    values="f1_macro",
-    aggfunc="first",
-).reset_index()
-strategy_pivot.columns = (
-    ["network_id", "method"]
-    + [f"clf_f1_{c}" for c in strategy_pivot.columns[2:]]
-)
-
-nc_df = nc_agg.merge(strategy_pivot, on=["network_id", "method"], how="left")
-print(f"  Aggregated classification: {nc_df.shape[0]:,} rows, {nc_df.shape[1]} cols")
-
-# ---------------------------------------------------------------------------
-# 3. Ranking results (appnp only)
-# ---------------------------------------------------------------------------
-print("\n[3/4] Reading ranking results ...")
-rank_frames = []
-for f in sorted(glob.glob(str(RESULTS_DIR / "*" / "*_ranking_results.csv"))):
-    try:
-        rank_frames.append(pd.read_csv(f))
-    except Exception as e:
-        print(f"  WARN: {f}: {e}")
-
-rank_df = pd.concat(rank_frames, ignore_index=True)
-# Rename columns to avoid clashes
-rank_df = rank_df.rename(columns={
-    c: f"ranking_{c}" for c in rank_df.columns if c not in ("network_id", "method")
-})
-print(f"  Ranking rows: {len(rank_df):,}  |  Methods: {rank_df['method'].unique().tolist()}")
-
-# ---------------------------------------------------------------------------
-# 4. Link prediction results (appnp only)
-# ---------------------------------------------------------------------------
-print("\n[4/4] Reading link prediction results ...")
-lp_frames = []
-for f in sorted(glob.glob(str(RESULTS_DIR / "*" / "*_link_prediction.csv"))):
-    try:
-        lp_frames.append(pd.read_csv(f))
-    except Exception as e:
-        print(f"  WARN: {f}: {e}")
-
-lp_raw = pd.concat(lp_frames, ignore_index=True)
-
-# Aggregate over edge_feature_method per (network_id, method, negative_strategy)
-lp_agg = (
-    lp_raw
-    .groupby(["network_id", "method", "negative_strategy"])
-    .agg(
-        lp_mean_auc_roc =("auc_roc", "mean"),
-        lp_std_auc_roc  =("auc_roc", "std"),
-        lp_max_auc_roc  =("auc_roc", "max"),
-        lp_mean_auc_pr  =("auc_pr",  "mean"),
-        lp_std_auc_pr   =("auc_pr",  "std"),
-        lp_max_auc_pr   =("auc_pr",  "max"),
-        lp_mean_mrr     =("mrr",     "mean"),
-        lp_mean_f1      =("f1",      "mean"),
-        lp_n_methods    =("auc_roc", "count"),
-    )
-    .reset_index()
-    .drop(columns=["negative_strategy"])  # only 'random' strategy present
-)
-
-# Per-edge-feature-method AUC columns (hadamard, average, l1, l2, inner_product, cosine)
-ef_pivot = lp_raw.pivot_table(
-    index=["network_id", "method"],
-    columns="edge_feature_method",
-    values=["auc_roc", "auc_pr", "f1"],
-    aggfunc="first",
-).reset_index()
-ef_pivot.columns = (
-    ["network_id", "method"]
-    + [f"lp_{stat}_{ef}" for stat, ef in ef_pivot.columns[2:]]
-)
-
-lp_df = lp_agg.merge(ef_pivot, on=["network_id", "method"], how="left")
-print(f"  Link prediction rows: {len(lp_df):,}  |  Methods: {lp_raw['method'].unique().tolist()}")
-
-# ---------------------------------------------------------------------------
-# 5. Assemble final table
-# ---------------------------------------------------------------------------
-print("\nAssembling final table ...")
-
-# Start from classification (all methods)
-final = nc_df.copy()
-
-# Left-join ranking (appnp only → NaN for others)
-final = final.merge(rank_df, on=["network_id", "method"], how="left")
-
-# Left-join link prediction (appnp only → NaN for others)
-final = final.merge(lp_df, on=["network_id", "method"], how="left")
-
-# Left-join network-level features (broadcast per network)
-net_cols = [c for c in complexity_df.columns if c != "network_id"]
-final = final.merge(complexity_df[["network_id"] + net_cols], on="network_id", how="left")
-
-print(f"\nFinal shape: {final.shape}")
-print(f"  Networks: {final['network_id'].nunique()}")
-print(f"  Methods:  {sorted(final['method'].unique())}")
-print(f"  Rows:     {len(final):,}")
-
-# ---------------------------------------------------------------------------
-# 6. Save
-# ---------------------------------------------------------------------------
-final.to_csv(OUTPUT_CSV, index=False)
-print(f"\nSaved → {OUTPUT_CSV}")
-
-# ---------------------------------------------------------------------------
-# 7. Coverage summary
-# ---------------------------------------------------------------------------
-print("\n--- Coverage per method ---")
-method_order = sorted(final["method"].unique())
-for m in method_order:
-    sub = final[final["method"] == m]
-    n = len(sub)
-    clf_ok  = sub["clf_mean_f1_macro"].notna().sum()
-    rank_ok = sub["ranking_precision@10_centroid"].notna().sum() if "ranking_precision@10_centroid" in sub else 0
-    lp_ok   = sub["lp_mean_auc_roc"].notna().sum()
-    print(f"  {m:<30s} networks={n:3d}  clf={clf_ok:3d}  ranking={rank_ok:3d}  lp={lp_ok:3d}")
-
-print("\nDone.")
+# Made with Bob
