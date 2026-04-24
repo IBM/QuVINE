@@ -1,0 +1,82 @@
+dataset:
+  family: heterophilous_graphs
+  source_repo: yandex-research/heterophilous-graphs
+  names:
+    - roman_empire
+    - amazon_ratings
+    - minesweeper
+    - tolokers
+    - questions
+
+paths:
+  local:
+    raw_dir: data/heterophilous_graphs/raw
+    processed_root: data/heterophilous_graphs/processed
+    subsamples_dir: data/heterophilous_graphs/processed/A_subsamples
+    full_dir: data/heterophilous_graphs/processed/B_full
+    notebook: notebooks/heterophilous_graphs_preprocessing.ipynb
+  hpc:
+    data_root: /dccstor/cgq4hls/Q/heterophilous_graphs/processed
+    subsamples_dir: /dccstor/cgq4hls/Q/heterophilous_graphs/processed/A_subsamples
+    full_dir: /dccstor/cgq4hls/Q/heterophilous_graphs/processed/B_full
+    output_root: /dccstor/cgq4hls/Q/heterophilous_graphs/results
+    hparam_base: /dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning
+
+preprocessing:
+  target_sizes:
+    - 2000
+    - 5000
+    - 10000
+  n_subsamples: 30
+  base_seed: 42
+  restart_prob: 0.15
+  frontier_width: 256
+  degree_weight_power: 0.5
+  local_bfs_expansion: 8
+
+storage_layout:
+  mode_A: A_subsamples
+  mode_B: B_full
+  graph_file_format: csv_edgelist
+  graph_columns:
+    - node1
+    - node2
+  metadata_sidecar: json
+  sidecar_arrays:
+    - node_labels.npy
+    - node_features.npy
+    - train_masks.npy
+    - val_masks.npy
+    - test_masks.npy
+  node_index_mapping: node_index.csv
+
+analysis:
+  methods:
+    - quvine_fused
+    - quvine_ctqw
+    - quvine_dtqw
+    - quvine_rwr
+    - quvine_heat
+    - quvine_poly
+    - quvine_hgcnmf
+    - quvine_pgcnmf
+    - netmf
+    - node2vec
+    - baseline_gcnmf
+    - baseline_filter
+    - graphsage
+  negative_strategy: random
+  base_seed: 42
+  default_seed_pct: 10
+  default_target_pct: 10
+  use_original_splits_for_full_graphs: true
+  preserve_labels_features_masks_for_subsamples: true
+
+lsf:
+  queue: normal
+  walltime: "72:00"
+  memory_gb: 12
+  aggregation_memory_gb: 16
+  python_env: /u/futro/envs/py311/bin/activate
+
+# Made with Bob

@@ -1,19 +1,19 @@
 #!/bin/bash
 ################################################################################
-# PPI Disease Network Job Submission — v3
+# PPI Disease Network Job Submission — v3 (Multi-Scale)
 #
-# 5 PPI networks × 3 diseases × 30 replicates = 450 analysis jobs.
-# Each replicate subsamples 500 nodes around disease seeds/targets (all
-# seeds+targets are protected and always included), then fills the remaining
-# budget with BFS neighbors + random nodes.  Different RNG seeds give
-# stochastic variation across replicates.
+# Generates NEW node count configurations (2000-node jobs already completed):
+#   - ProteomeHD: SKIP (2000 nodes already done)
+#   - BioPlex3: 5000 nodes only (2000 already done)
+#   - STRING, HumanNet, PCNet: 5000, 10000, 15000 nodes (2000 already done)
 #
-# Optimized vs v2:
-#   - 500 nodes  (v2: 2000) → ~64× faster spectral/eigendecomposition
-#   - Betti numbers computed (n < 500 threshold met at n=500 — exactly on boundary)
-#   - QBC uses sparse eigsh with k=200 components: fast for 500-node graphs
-#   - Walltime 2h, memory 8GB (v2: 4h / 16GB)
-#   - 30 replicates (v2: 25) for better ensemble variance
+# Each configuration × 3 diseases × 30 replicates
+#
+# Total NEW jobs:
+#   - ProteomeHD: 0 jobs (already complete)
+#   - BioPlex3: 1 size × 3 diseases × 30 reps = 90 jobs
+#   - STRING/HumanNet/PCNet: 3 nets × 3 sizes × 3 diseases × 30 reps = 810 jobs
+#   - TOTAL: 900 NEW jobs
 #
 # Hyperparameters  : results/hparam_tuning/real_{NET}/best_hyperparams.json
 # Networks         : STRING, BioPlex3, HumanNet, PCNet, ProteomeHD
@@ -24,7 +24,7 @@
 # Usage:
 #   bash scripts/submit_ppi_disease_jobs_v3.sh [--dry-run] [--queue QUEUE]
 #                                               [--walltime TIME] [--memory MEM]
-#                                               [--max-nodes N] [--n-reps N]
+#                                               [--n-reps N]
 #
 ################################################################################
 
@@ -36,11 +36,26 @@ set -e
 QUEUE="normal"
 WALLTIME="240:00"
 MEMORY="16"
-MAX_NODES="2000"
-N_REPS="40"
+N_REPS="30"
 DRY_RUN=false
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
 METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter,graphsage"
+
+# ---------------------------------------------------------------------------
+# Network-specific node count configurations
+# NOTE: 2000-node jobs already completed, only generating NEW configurations
+# ---------------------------------------------------------------------------
+# Function to get node counts for a network
+get_node_counts() {
+    case "$1" in
+        ProteomeHD) echo "" ;;  # Already done at 2000 nodes
+        BioPlex3)   echo "5000" ;;  # 2000 already done
+        STRING)     echo "5000 10000 15000" ;;  # 2000 already done
+        HumanNet)   echo "5000 10000 15000" ;;  # 2000 already done
+        PCNet)      echo "5000 10000 15000" ;;  # 2000 already done
+        *)          echo "" ;;
+    esac
+}
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -50,13 +65,12 @@ while [[ $# -gt 0 ]]; do
         --queue)      QUEUE="$2";      shift 2 ;;
         --walltime)   WALLTIME="$2";   shift 2 ;;
         --memory)     MEMORY="$2";     shift 2 ;;
-        --max-nodes)  MAX_NODES="$2";  shift 2 ;;
         --n-reps)     N_REPS="$2";     shift 2 ;;
         --python-env) PYTHON_ENV="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=true;    shift ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--max-nodes N] [--n-reps R] [--dry-run]"
+            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--n-reps R] [--dry-run]"
             exit 1 ;;
     esac
 done
@@ -76,12 +90,17 @@ mkdir -p "$LOG_DIR" "${OUTPUT_BASE}/results"
 # ---------------------------------------------------------------------------
 # Network definitions
 # ---------------------------------------------------------------------------
-declare -A NET_PATHS
-NET_PATHS["STRING"]="${DATA_ROOT}/networks/STRING/edges_list_ncbi.csv"
-NET_PATHS["BioPlex3"]="${DATA_ROOT}/networks/BioPlex3_shared/edges_list_ncbi.csv"
-NET_PATHS["HumanNet"]="${DATA_ROOT}/networks/HumanNetV3/edges_list_ncbi.csv"
-NET_PATHS["PCNet"]="${DATA_ROOT}/networks/PCNet/edges_list_ncbi.csv"
-NET_PATHS["ProteomeHD"]="${DATA_ROOT}/networks/ProteomeHD/edges_list_ncbi.csv"
+# Function to get network path
+get_network_path() {
+    case "$1" in
+        STRING)     echo "${DATA_ROOT}/networks/STRING/edges_list_ncbi.csv" ;;
+        BioPlex3)   echo "${DATA_ROOT}/networks/BioPlex3_shared/edges_list_ncbi.csv" ;;
+        HumanNet)   echo "${DATA_ROOT}/networks/HumanNetV3/edges_list_ncbi.csv" ;;
+        PCNet)      echo "${DATA_ROOT}/networks/PCNet/edges_list_ncbi.csv" ;;
+        ProteomeHD) echo "${DATA_ROOT}/networks/ProteomeHD/edges_list_ncbi.csv" ;;
+        *)          echo "" ;;
+    esac
+}
 
 NETWORKS="STRING BioPlex3 HumanNet PCNet ProteomeHD"
 DISEASES="asthma autism schizophrenia"
@@ -89,16 +108,22 @@ DISEASES="asthma autism schizophrenia"
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
-TOTAL_JOBS=$(( 5 * 3 * N_REPS ))
+# Calculate total NEW jobs: ProteomeHD(0) + BioPlex3(1×3×30) + STRING/HumanNet/PCNet(3×3×3×30)
+TOTAL_JOBS=$(( (0 * 3 * N_REPS) + (1 * 3 * N_REPS) + (3 * 3 * 3 * N_REPS) ))
 echo "======================================================"
-echo " PPI Disease Network Job Submission — v3 (optimized)"
+echo " PPI Disease Network Job Submission — v3 (Multi-Scale)"
 echo "======================================================"
 echo " Project dir  : $PROJECT_DIR"
 echo " Output dir   : $OUTPUT_BASE"
 echo " Queue        : $QUEUE"
 echo " Wall time    : $WALLTIME"
 echo " Memory       : ${MEMORY}GB"
-echo " Max nodes    : ${MAX_NODES} (seeds+targets always kept)"
+echo " Node counts  :"
+echo "   ProteomeHD : $(get_node_counts ProteomeHD)"
+echo "   BioPlex3   : $(get_node_counts BioPlex3)"
+echo "   STRING     : $(get_node_counts STRING)"
+echo "   HumanNet   : $(get_node_counts HumanNet)"
+echo "   PCNet      : $(get_node_counts PCNet)"
 echo " Replicates   : ${N_REPS} (seeds 0..$((N_REPS-1)))"
 echo " Total jobs   : ${TOTAL_JOBS}"
 echo " Methods      : $METHODS"
@@ -114,19 +139,29 @@ JOB_IDS=()
 JOB_COUNT=0
 
 for NET in $NETWORKS; do
-    NET_PATH="${NET_PATHS[$NET]}"
+    NET_PATH="$(get_network_path $NET)"
     HPARAM_JSON="${HPARAM_BASE}/real_${NET}/best_hyperparams.json"
+    
+    # Get node counts for this network
+    NET_NODE_COUNTS="$(get_node_counts $NET)"
+    
+    # Skip if no node counts (e.g., ProteomeHD already done)
+    if [ -z "$NET_NODE_COUNTS" ]; then
+        echo "Skipping $NET (already complete at 2000 nodes)"
+        continue
+    fi
 
-    for DISEASE in $DISEASES; do
-        for REP in $(seq -w 0 $((N_REPS-1))); do
-            SEED=$((10#$REP))          # numeric seed
-            NET_ID="${NET}_${DISEASE}_rep${REP}"
-            JOB_NAME="ppi3_${NET_ID}"
-            JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
-            JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
-            JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
-            RESULT_DIR="${OUTPUT_BASE}/results/${NET_ID}"
-            mkdir -p "$RESULT_DIR"
+    for MAX_NODES in $NET_NODE_COUNTS; do
+        for DISEASE in $DISEASES; do
+            for REP in $(seq -w 0 $((N_REPS-1))); do
+                SEED=$((10#$REP))          # numeric seed
+                NET_ID="${NET}_n${MAX_NODES}_${DISEASE}_rep${REP}"
+                JOB_NAME="ppi3_${NET_ID}"
+                JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+                JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+                JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+                RESULT_DIR="${OUTPUT_BASE}/results/${NET_ID}"
+                mkdir -p "$RESULT_DIR"
 
             cat > "$JOB_SH" << BSUBEOF
 #!/bin/bash
@@ -255,8 +290,6 @@ if G_full.number_of_nodes() > MAX_NODES:
                for t in targets_full
                if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
     print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
-               if G_full.nodes[t]['ncbi_id'] in ncbi_to_node_sub]
-    print(f'After subsampling: {len(seeds)} seeds, {len(targets)} targets retained')
 else:
     G = G_full
     seeds, targets = seeds_full, targets_full
@@ -313,6 +346,7 @@ BSUBEOF
                     echo "  ERROR: failed to submit $JOB_NAME"
                 fi
             fi
+            done
         done
     done
 done
