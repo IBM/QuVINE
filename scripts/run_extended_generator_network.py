@@ -222,7 +222,7 @@ def main():
             print(f"Saved network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
 
     # ── Run embedding pipeline ─────────────────────────────────────────────
-    from quvine.pipeline import run_comprehensive_pipeline
+    from quvine.comprehensive_embedding_analysis import run_single_network_analysis
 
     methods = [m.strip() for m in args.methods.split(',')]
     
@@ -232,29 +232,34 @@ def main():
             print(f"  - {m}")
 
     # Load hyperparameters if provided
-    hparams = None
+    method_hyperparams = None
     if args.hparam_file and Path(args.hparam_file).exists():
         with open(args.hparam_file, 'r') as f:
-            hparams = json.load(f)
-        if args.verbose:
-            print(f"Loaded hyperparameters from {args.hparam_file}")
+            all_hparams = json.load(f)
+        # Try to get hyperparameters for this network type
+        network_type_key = args.network_type
+        if network_type_key in all_hparams.get("best_params", {}):
+            method_hyperparams = all_hparams["best_params"][network_type_key]
+            if args.verbose:
+                print(f"Loaded hyperparameters for network type '{network_type_key}'")
+        else:
+            if args.verbose:
+                print(f"No hyperparameters found for '{network_type_key}', using defaults")
 
-    results = run_comprehensive_pipeline(
-        graph=G,
-        network_name=args.network_id,
+    run_single_network_analysis(
+        G=G,
+        network_id=args.network_id,
         network_metadata=metadata,
-        methods=methods,
         output_dir=str(output_dir),
-        hyperparams=hparams,
+        embedding_methods=methods,
         resume=args.resume,
-        verbose=args.verbose
+        verbose=args.verbose,
+        method_hyperparams=method_hyperparams,
     )
 
     if args.verbose:
-        print(f"\nPipeline complete. Results saved to {output_dir}")
-        print(f"  - ranking_results.csv")
-        print(f"  - classification_results.csv")
-        print(f"  - link_prediction_results.csv")
+        print(f"\nAnalysis complete for {args.network_id}")
+        print(f"Results saved to {output_dir}")
 
     return 0
 

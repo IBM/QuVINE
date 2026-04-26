@@ -270,16 +270,26 @@ echo "========================================"
 echo " AGGREGATING EXTENDED GENERATORS RESULTS"
 echo "========================================"
 
-# Aggregate all per-network CSVs into comprehensive_results.csv
-python scripts/collect_hpc_results.py \\
+# Step 1: Package embeddings into .npz files
+echo "Step 1/2: Packaging embeddings to .npz..."
+python scripts/package_embeddings_to_npz.py \\
     --results-dir ${OUTPUT_DIR}/results \\
-    --viz-dir     ${OUTPUT_DIR}/visualizations \\
-    --n-networks  ${TOTAL_JOBS}
+    --verbose
 
+# Step 2: Aggregate all per-network CSVs by network type
+echo ""
+echo "Step 2/2: Aggregating CSVs by network type..."
+python scripts/aggregate_extended_generators.py \\
+    --results-dir ${OUTPUT_DIR}/results \\
+    --output-dir  ${OUTPUT_DIR}/aggregated \\
+    --verbose
+
+echo ""
 echo "========================================"
 echo " AGGREGATION COMPLETE"
-echo " Results CSV : ${OUTPUT_DIR}/results/comprehensive_results.csv"
-echo " Plots       : ${OUTPUT_DIR}/visualizations/"
+echo " Aggregated CSVs : ${OUTPUT_DIR}/aggregated/"
+echo " Embeddings (.npz): ${OUTPUT_DIR}/results/{network_id}/"
+echo " GraphML files    : ${OUTPUT_DIR}/results/{network_id}/"
 echo "========================================"
 
 exit \$?
