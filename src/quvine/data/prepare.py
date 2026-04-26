@@ -9,10 +9,17 @@ from .sparsify import materialize_undirected_simple_graph, sparsify_edges_biolog
 from .subgraph import subsample_nodes
 
 
-def keep_largest_connected_component(G: nx.Graph) -> nx.Graph:
+def keep_largest_connected_component(
+    G: nx.Graph,
+    *,
+    required_nodes: Iterable | None = None,
+) -> nx.Graph:
     """
-    Return the largest connected component of an undirected graph.
-    Safe, simple, and deterministic.
+    Return a connected component while preserving required nodes when possible.
+
+    If required_nodes are supplied and they all lie in the same connected
+    component, that component is preferred over the global largest component.
+    Otherwise, fall back to the largest connected component.
     """
     if G.number_of_nodes() == 0:
         return G
@@ -20,7 +27,14 @@ def keep_largest_connected_component(G: nx.Graph) -> nx.Graph:
     if nx.is_connected(G):
         return G
 
-    lcc_nodes = max(nx.connected_components(G), key=len)
+    components = [set(c) for c in nx.connected_components(G)]
+    required = set(required_nodes or []) & set(G.nodes())
+    if required:
+        for comp in components:
+            if required.issubset(comp):
+                return G.subgraph(comp).copy()
+
+    lcc_nodes = max(components, key=len)
     return G.subgraph(lcc_nodes).copy()
 
 
@@ -88,7 +102,7 @@ def prepare_graph(
             rng=rng,
         )
 
-        G = keep_largest_connected_component(G)
+        G = keep_largest_connected_component(G, required_nodes=set(seeds or []) | set(targets or []))
         
     # Step 3: sparsify edges (biology-aware, degree-capped)
     if cfg.sparsify_edges:
@@ -99,7 +113,7 @@ def prepare_graph(
             rng=rng,
             scoring=cfg.scoring,
         )
-    G = keep_largest_connected_component(G)
+    G = keep_largest_connected_component(G, required_nodes=set(seeds or []) | set(targets or []))
     # Step 4: lightweight stats (optional)
     if cfg.verbose and G.number_of_nodes() > 0:
         avg_deg = (2.0 * G.number_of_edges() / G.number_of_nodes()) if G.number_of_nodes() else 0.0

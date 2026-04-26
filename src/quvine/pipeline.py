@@ -19,6 +19,26 @@ from quvine.embedding.registry import EmbeddingStore
 from quvine.analysis.compare import compare_embeddings
 from quvine.analysis.analyze import *
 from quvine.baselines import run_appnp, run_node2vec
+from quvine.baselines.graphsage import run_graphsage
+from quvine.baselines.gat import (
+    generate_gat_embedding,
+    GATConfig,
+    TrainConfig as GATTrainConfig,
+)
+from quvine.baselines.gcn_mf import (
+    generate_baseline_gcnmf_embedding,
+    generate_quvine_gcnmf_embedding,
+)
+from quvine.baselines.graphgps import (
+    generate_graphgps_embedding,
+    GraphGPSConfig,
+    TrainConfig as GraphGPSTrainConfig,
+)
+from quvine.embedding.quantum_filters import (
+    generate_baseline_filter_embedding,
+    generate_quvine_heat_embedding,
+    generate_quvine_poly_embedding,
+)
 from quvine.fusion.fuse import fuse_embeddings
 from quvine.evaluation.ranking import (
     seed_centroid_scores,
@@ -166,7 +186,11 @@ class Pipeline:
         if self.cfg.verbose:
             print(f"Time taken for one QuVINE iteration {time_taken/60} minutes")
         
-        ## baselines
+        ## baselines and quantum-calibrated downstream methods
+        q_targets = None
+        if source is not None and len(source) > 0:
+            q_targets = self._build_quantum_targets(graph_data, source)
+
         beg_time = time.time()
         if self.cfg.baselines.node2vec.enabled:
             Z_n2v = run_node2vec(
@@ -183,7 +207,7 @@ class Pipeline:
                         seed=self.cfg.baselines.node2vec.seed
                         )
             store.add("node2vec", Z_n2v)
-            end_time = time.time() 
+            end_time = time.time()
             time_taken = end_time - beg_time
             if self.cfg.verbose:
                 print(f"Time taken for one node2vec iteration {time_taken/60} minutes")
@@ -208,6 +232,605 @@ class Pipeline:
             time_taken = end_time - beg_time
             if self.cfg.verbose:
                 print(f"Time taken for one APPNP iteration {time_taken/60} minutes")
+
+        if hasattr(self.cfg.baselines, "baseline_filter") and self.cfg.baselines.baseline_filter.enabled:
+            Z_baseline_filter = generate_baseline_filter_embedding(
+                        G=graph_data,
+                        filter_type=getattr(self.cfg.baselines.baseline_filter, "filter_type", "heat"),
+                        t=getattr(self.cfg.baselines.baseline_filter, "t", 1.0),
+                        K=getattr(self.cfg.baselines.baseline_filter, "K", 4),
+                        embedding_dim=getattr(self.cfg.baselines.baseline_filter, "embedding_dim", self.cfg.train.embedding_dim),
+                        use_features=False,
+                        features=None,
+                        normalize=getattr(self.cfg.baselines.baseline_filter, "normalize", True),
+                        random_state=getattr(self.cfg.baselines.baseline_filter, "random_state", self.base_seed),
+                        )
+            store.add("baseline_filter", Z_baseline_filter)
+
+        if hasattr(self.cfg.baselines, "baseline_gcnmf") and self.cfg.baselines.baseline_gcnmf.enabled:
+            Z_baseline_gcnmf = generate_baseline_gcnmf_embedding(
+                        G=graph_data,
+                        embedding_dim=getattr(self.cfg.baselines.baseline_gcnmf, "embedding_dim", self.cfg.train.embedding_dim),
+                        hidden_dim=getattr(self.cfg.baselines.baseline_gcnmf, "hidden_dim", 64),
+                        mf_dim=getattr(self.cfg.baselines.baseline_gcnmf, "mf_dim", 64),
+                        n_layers=getattr(self.cfg.baselines.baseline_gcnmf, "n_layers", 2),
+                        epochs=getattr(self.cfg.baselines.baseline_gcnmf, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.baseline_gcnmf, "lr", 0.01),
+                        weight_decay=getattr(self.cfg.baselines.baseline_gcnmf, "weight_decay", 5e-4),
+                        random_state=getattr(self.cfg.baselines.baseline_gcnmf, "random_state", self.base_seed),
+                        )
+            store.add("baseline_gcnmf", Z_baseline_gcnmf)
+
+        if hasattr(self.cfg.baselines, "baseline_gat") and self.cfg.baselines.baseline_gat.enabled:
+            baseline_gat_dim = getattr(self.cfg.baselines.baseline_gat, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.baseline_gat, "hidden_dim", 64),
+                        output_dim=baseline_gat_dim,
+                        num_layers=getattr(self.cfg.baselines.baseline_gat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.baseline_gat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.baseline_gat, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.baseline_gat, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.baseline_gat, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.baseline_gat, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.baseline_gat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.baseline_gat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.baseline_gat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.baseline_gat, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.baseline_gat, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.baseline_gat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.baseline_gat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.baseline_gat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.baseline_gat, "verbose", False),
+                    )
+            Z_baseline_gat, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.baseline_gat, "variant", "raw"),
+                        nodelist=list(graph_data.nodes),
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("baseline_gat", Z_baseline_gat)
+
+        if hasattr(self.cfg.baselines, "baseline_graphgps") and self.cfg.baselines.baseline_graphgps.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.baseline_graphgps, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.baseline_graphgps, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.baseline_graphgps, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.baseline_graphgps, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.baseline_graphgps, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.baseline_graphgps, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.baseline_graphgps, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.baseline_graphgps, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.baseline_graphgps, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.baseline_graphgps, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.baseline_graphgps, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.baseline_graphgps, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.baseline_graphgps, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.baseline_graphgps, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.baseline_graphgps, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.baseline_graphgps, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.baseline_graphgps, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.baseline_graphgps, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.baseline_graphgps, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.baseline_graphgps, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.baseline_graphgps, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.baseline_graphgps, "verbose", False),
+                        )
+            Z_baseline_graphgps, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.baseline_graphgps, "variant", "raw"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.baseline_graphgps, "embedding_dim", self.cfg.train.embedding_dim),
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("baseline_graphgps", Z_baseline_graphgps)
+
+        if hasattr(self.cfg.baselines, "graphsage") and self.cfg.baselines.graphsage.enabled:
+            Z_graphsage = run_graphsage(
+                        graph=graph_data,
+                        nodes=list(graph_data.nodes),
+                        dimensions=getattr(self.cfg.baselines.graphsage, "dimensions", self.cfg.train.embedding_dim),
+                        hidden_dim=getattr(self.cfg.baselines.graphsage, "hidden_dim", min(256, self.cfg.train.embedding_dim * 2)),
+                        n_layers=getattr(self.cfg.baselines.graphsage, "n_layers", 2),
+                        epochs=getattr(self.cfg.baselines.graphsage, "epochs", 50),
+                        lr=getattr(self.cfg.baselines.graphsage, "lr", 0.01),
+                        neg_samples=getattr(self.cfg.baselines.graphsage, "neg_samples", 5),
+                        seed=getattr(self.cfg.baselines.graphsage, "seed", self.base_seed),
+                        )
+            store.add("graphsage", Z_graphsage)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_heat") and self.cfg.baselines.quvine_heat.enabled:
+            Z_quvine_heat = generate_quvine_heat_embedding(
+                        G=graph_data,
+                        q_targets=q_targets,
+                        embedding_dim=getattr(self.cfg.baselines.quvine_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        use_features=False,
+                        features=None,
+                        normalize=getattr(self.cfg.baselines.quvine_heat, "normalize", True),
+                        random_state=getattr(self.cfg.baselines.quvine_heat, "random_state", self.base_seed),
+                        )
+            store.add("quvine_heat", Z_quvine_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_poly") and self.cfg.baselines.quvine_poly.enabled:
+            Z_quvine_poly = generate_quvine_poly_embedding(
+                        G=graph_data,
+                        q_targets=q_targets,
+                        K=getattr(self.cfg.baselines.quvine_poly, "K", 4),
+                        ridge=getattr(self.cfg.baselines.quvine_poly, "ridge", 1e-6),
+                        embedding_dim=getattr(self.cfg.baselines.quvine_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        use_features=False,
+                        features=None,
+                        normalize=getattr(self.cfg.baselines.quvine_poly, "normalize", True),
+                        random_state=getattr(self.cfg.baselines.quvine_poly, "random_state", self.base_seed),
+                        )
+            store.add("quvine_poly", Z_quvine_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_hgcnmf") and self.cfg.baselines.quvine_hgcnmf.enabled:
+            Z_quvine_hgcnmf, _ = generate_quvine_gcnmf_embedding(
+                        G=graph_data,
+                        q_targets=q_targets,
+                        embedding_dim=getattr(self.cfg.baselines.quvine_hgcnmf, "embedding_dim", self.cfg.train.embedding_dim),
+                        diffusion_type="heat",
+                        hidden_dim=getattr(self.cfg.baselines.quvine_hgcnmf, "hidden_dim", 64),
+                        mf_dim=getattr(self.cfg.baselines.quvine_hgcnmf, "mf_dim", 64),
+                        n_layers=getattr(self.cfg.baselines.quvine_hgcnmf, "n_layers", 2),
+                        epochs=getattr(self.cfg.baselines.quvine_hgcnmf, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.quvine_hgcnmf, "lr", 0.01),
+                        weight_decay=getattr(self.cfg.baselines.quvine_hgcnmf, "weight_decay", 5e-4),
+                        normalize_laplacian=getattr(self.cfg.baselines.quvine_hgcnmf, "normalize_laplacian", True),
+                        random_state=getattr(self.cfg.baselines.quvine_hgcnmf, "random_state", self.base_seed),
+                        )
+            store.add("quvine_hgcnmf", Z_quvine_hgcnmf)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_pgcnmf") and self.cfg.baselines.quvine_pgcnmf.enabled:
+            Z_quvine_pgcnmf, _ = generate_quvine_gcnmf_embedding(
+                        G=graph_data,
+                        q_targets=q_targets,
+                        embedding_dim=getattr(self.cfg.baselines.quvine_pgcnmf, "embedding_dim", self.cfg.train.embedding_dim),
+                        diffusion_type="poly",
+                        K=getattr(self.cfg.baselines.quvine_pgcnmf, "K", 4),
+                        ridge=getattr(self.cfg.baselines.quvine_pgcnmf, "ridge", 1e-6),
+                        hidden_dim=getattr(self.cfg.baselines.quvine_pgcnmf, "hidden_dim", 64),
+                        mf_dim=getattr(self.cfg.baselines.quvine_pgcnmf, "mf_dim", 64),
+                        n_layers=getattr(self.cfg.baselines.quvine_pgcnmf, "n_layers", 2),
+                        epochs=getattr(self.cfg.baselines.quvine_pgcnmf, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.quvine_pgcnmf, "lr", 0.01),
+                        weight_decay=getattr(self.cfg.baselines.quvine_pgcnmf, "weight_decay", 5e-4),
+                        normalize_laplacian=getattr(self.cfg.baselines.quvine_pgcnmf, "normalize_laplacian", True),
+                        random_state=getattr(self.cfg.baselines.quvine_pgcnmf, "random_state", self.base_seed),
+                        )
+            store.add("quvine_pgcnmf", Z_quvine_pgcnmf)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_ctqw_heat") and self.cfg.baselines.gat_ctqw_heat.enabled:
+            gat_ctqw_heat_dim = getattr(self.cfg.baselines.gat_ctqw_heat, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_ctqw_heat, "hidden_dim", 64),
+                        output_dim=gat_ctqw_heat_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_ctqw_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_ctqw_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_ctqw_heat, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_ctqw_heat, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_ctqw_heat, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_ctqw_heat, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_ctqw_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_ctqw_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_ctqw_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_ctqw_heat, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_ctqw_heat, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_ctqw_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_ctqw_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_ctqw_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_ctqw_heat, "verbose", False),
+                    )
+            Z_gat_ctqw_heat, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_ctqw_heat, "variant", "heat_qcal_ctqw"),
+                        nodelist=list(graph_data.nodes),
+                        ctqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_ctqw_heat", Z_gat_ctqw_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_ctqw_poly") and self.cfg.baselines.gat_ctqw_poly.enabled:
+            gat_ctqw_poly_dim = getattr(self.cfg.baselines.gat_ctqw_poly, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_ctqw_poly, "hidden_dim", 64),
+                        output_dim=gat_ctqw_poly_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_ctqw_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_ctqw_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_ctqw_poly, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_ctqw_poly, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_ctqw_poly, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_ctqw_poly, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_ctqw_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_ctqw_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_ctqw_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_ctqw_poly, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_ctqw_poly, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_ctqw_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_ctqw_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_ctqw_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_ctqw_poly, "verbose", False),
+                    )
+            Z_gat_ctqw_poly, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_ctqw_poly, "variant", "poly_qcal_ctqw"),
+                        nodelist=list(graph_data.nodes),
+                        ctqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_ctqw_poly", Z_gat_ctqw_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_dtqw_heat") and self.cfg.baselines.gat_dtqw_heat.enabled:
+            gat_dtqw_heat_dim = getattr(self.cfg.baselines.gat_dtqw_heat, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_dtqw_heat, "hidden_dim", 64),
+                        output_dim=gat_dtqw_heat_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_dtqw_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_dtqw_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_dtqw_heat, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_dtqw_heat, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_dtqw_heat, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_dtqw_heat, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_dtqw_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_dtqw_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_dtqw_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_dtqw_heat, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_dtqw_heat, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_dtqw_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_dtqw_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_dtqw_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_dtqw_heat, "verbose", False),
+                    )
+            Z_gat_dtqw_heat, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_dtqw_heat, "variant", "heat_qcal_dtqw"),
+                        nodelist=list(graph_data.nodes),
+                        dtqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_dtqw_heat", Z_gat_dtqw_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_dtqw_poly") and self.cfg.baselines.gat_dtqw_poly.enabled:
+            gat_dtqw_poly_dim = getattr(self.cfg.baselines.gat_dtqw_poly, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_dtqw_poly, "hidden_dim", 64),
+                        output_dim=gat_dtqw_poly_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_dtqw_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_dtqw_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_dtqw_poly, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_dtqw_poly, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_dtqw_poly, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_dtqw_poly, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_dtqw_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_dtqw_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_dtqw_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_dtqw_poly, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_dtqw_poly, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_dtqw_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_dtqw_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_dtqw_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_dtqw_poly, "verbose", False),
+                    )
+            Z_gat_dtqw_poly, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_dtqw_poly, "variant", "poly_qcal_dtqw"),
+                        nodelist=list(graph_data.nodes),
+                        dtqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_dtqw_poly", Z_gat_dtqw_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_rwr_heat") and self.cfg.baselines.gat_rwr_heat.enabled:
+            gat_rwr_heat_dim = getattr(self.cfg.baselines.gat_rwr_heat, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_rwr_heat, "hidden_dim", 64),
+                        output_dim=gat_rwr_heat_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_rwr_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_rwr_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_rwr_heat, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_rwr_heat, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_rwr_heat, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_rwr_heat, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_rwr_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_rwr_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_rwr_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_rwr_heat, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_rwr_heat, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_rwr_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_rwr_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_rwr_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_rwr_heat, "verbose", False),
+                    )
+            Z_gat_rwr_heat, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_rwr_heat, "variant", "heat_qcal_rwr"),
+                        nodelist=list(graph_data.nodes),
+                        ctqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_rwr_heat", Z_gat_rwr_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "gat_rwr_poly") and self.cfg.baselines.gat_rwr_poly.enabled:
+            gat_rwr_poly_dim = getattr(self.cfg.baselines.gat_rwr_poly, "embedding_dim", self.cfg.train.embedding_dim)
+            gat_cfg = GATConfig(
+                        hidden_dim=getattr(self.cfg.baselines.gat_rwr_poly, "hidden_dim", 64),
+                        output_dim=gat_rwr_poly_dim,
+                        num_layers=getattr(self.cfg.baselines.gat_rwr_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.gat_rwr_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.gat_rwr_poly, "dropout", 0.2),
+                        attention_dropout=getattr(self.cfg.baselines.gat_rwr_poly, "attention_dropout", 0.2),
+                        negative_slope=getattr(self.cfg.baselines.gat_rwr_poly, "negative_slope", 0.2),
+                        residual=getattr(self.cfg.baselines.gat_rwr_poly, "residual", True),
+                    )
+            gat_train_cfg = GATTrainConfig(
+                        epochs=getattr(self.cfg.baselines.gat_rwr_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.gat_rwr_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.gat_rwr_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.gat_rwr_poly, "patience", 25),
+                        edge_batch_size=getattr(self.cfg.baselines.gat_rwr_poly, "edge_batch_size", 4096),
+                        val_edge_fraction=getattr(self.cfg.baselines.gat_rwr_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.gat_rwr_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.gat_rwr_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.gat_rwr_poly, "verbose", False),
+                    )
+            Z_gat_rwr_poly, _ = generate_gat_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.gat_rwr_poly, "variant", "poly_qcal_rwr"),
+                        nodelist=list(graph_data.nodes),
+                        ctqw_targets=q_targets,
+                        gat_config=gat_cfg,
+                        train_config=gat_train_cfg,
+                    )
+            store.add("gat_rwr_poly", Z_gat_rwr_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_graphgps_heat") and self.cfg.baselines.quvine_graphgps_heat.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.quvine_graphgps_heat, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.quvine_graphgps_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.quvine_graphgps_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.quvine_graphgps_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.quvine_graphgps_heat, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.quvine_graphgps_heat, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.quvine_graphgps_heat, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.quvine_graphgps_heat, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.quvine_graphgps_heat, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.quvine_graphgps_heat, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.quvine_graphgps_heat, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.quvine_graphgps_heat, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.quvine_graphgps_heat, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.quvine_graphgps_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.quvine_graphgps_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.quvine_graphgps_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.quvine_graphgps_heat, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.quvine_graphgps_heat, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.quvine_graphgps_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.quvine_graphgps_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.quvine_graphgps_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.quvine_graphgps_heat, "verbose", False),
+                        )
+            Z_graphgps_ctqw_heat, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.quvine_graphgps_heat, "variant", "heat_qcal_ctqw"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.quvine_graphgps_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        ctqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_ctqw_heat", Z_graphgps_ctqw_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "quvine_graphgps_poly") and self.cfg.baselines.quvine_graphgps_poly.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.quvine_graphgps_poly, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.quvine_graphgps_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.quvine_graphgps_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.quvine_graphgps_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.quvine_graphgps_poly, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.quvine_graphgps_poly, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.quvine_graphgps_poly, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.quvine_graphgps_poly, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.quvine_graphgps_poly, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.quvine_graphgps_poly, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.quvine_graphgps_poly, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.quvine_graphgps_poly, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.quvine_graphgps_poly, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.quvine_graphgps_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.quvine_graphgps_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.quvine_graphgps_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.quvine_graphgps_poly, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.quvine_graphgps_poly, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.quvine_graphgps_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.quvine_graphgps_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.quvine_graphgps_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.quvine_graphgps_poly, "verbose", False),
+                        )
+            Z_graphgps_ctqw_poly, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.quvine_graphgps_poly, "variant", "poly_qcal_ctqw"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.quvine_graphgps_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        ctqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_ctqw_poly", Z_graphgps_ctqw_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "graphgps_dtqw_heat") and self.cfg.baselines.graphgps_dtqw_heat.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.graphgps_dtqw_heat, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.graphgps_dtqw_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.graphgps_dtqw_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.graphgps_dtqw_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.graphgps_dtqw_heat, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.graphgps_dtqw_heat, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.graphgps_dtqw_heat, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.graphgps_dtqw_heat, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.graphgps_dtqw_heat, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.graphgps_dtqw_heat, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.graphgps_dtqw_heat, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.graphgps_dtqw_heat, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.graphgps_dtqw_heat, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.graphgps_dtqw_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.graphgps_dtqw_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.graphgps_dtqw_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.graphgps_dtqw_heat, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.graphgps_dtqw_heat, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.graphgps_dtqw_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.graphgps_dtqw_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.graphgps_dtqw_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.graphgps_dtqw_heat, "verbose", False),
+                        )
+            Z_graphgps_dtqw_heat, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.graphgps_dtqw_heat, "variant", "heat_qcal_dtqw"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.graphgps_dtqw_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        dtqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_dtqw_heat", Z_graphgps_dtqw_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "graphgps_dtqw_poly") and self.cfg.baselines.graphgps_dtqw_poly.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.graphgps_dtqw_poly, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.graphgps_dtqw_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.graphgps_dtqw_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.graphgps_dtqw_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.graphgps_dtqw_poly, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.graphgps_dtqw_poly, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.graphgps_dtqw_poly, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.graphgps_dtqw_poly, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.graphgps_dtqw_poly, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.graphgps_dtqw_poly, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.graphgps_dtqw_poly, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.graphgps_dtqw_poly, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.graphgps_dtqw_poly, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.graphgps_dtqw_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.graphgps_dtqw_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.graphgps_dtqw_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.graphgps_dtqw_poly, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.graphgps_dtqw_poly, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.graphgps_dtqw_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.graphgps_dtqw_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.graphgps_dtqw_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.graphgps_dtqw_poly, "verbose", False),
+                        )
+            Z_graphgps_dtqw_poly, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.graphgps_dtqw_poly, "variant", "poly_qcal_dtqw"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.graphgps_dtqw_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        dtqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_dtqw_poly", Z_graphgps_dtqw_poly)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "graphgps_rwr_heat") and self.cfg.baselines.graphgps_rwr_heat.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.graphgps_rwr_heat, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.graphgps_rwr_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.graphgps_rwr_heat, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.graphgps_rwr_heat, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.graphgps_rwr_heat, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.graphgps_rwr_heat, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.graphgps_rwr_heat, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.graphgps_rwr_heat, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.graphgps_rwr_heat, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.graphgps_rwr_heat, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.graphgps_rwr_heat, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.graphgps_rwr_heat, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.graphgps_rwr_heat, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.graphgps_rwr_heat, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.graphgps_rwr_heat, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.graphgps_rwr_heat, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.graphgps_rwr_heat, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.graphgps_rwr_heat, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.graphgps_rwr_heat, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.graphgps_rwr_heat, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.graphgps_rwr_heat, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.graphgps_rwr_heat, "verbose", False),
+                        )
+            Z_graphgps_rwr_heat, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.graphgps_rwr_heat, "variant", "heat_qcal_rwr"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.graphgps_rwr_heat, "embedding_dim", self.cfg.train.embedding_dim),
+                        ctqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_rwr_heat", Z_graphgps_rwr_heat)
+
+        if q_targets is not None and hasattr(self.cfg.baselines, "graphgps_rwr_poly") and self.cfg.baselines.graphgps_rwr_poly.enabled:
+            gps_cfg = GraphGPSConfig(
+                        hidden_dim=getattr(self.cfg.baselines.graphgps_rwr_poly, "hidden_dim", 64),
+                        output_dim=getattr(self.cfg.baselines.graphgps_rwr_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        num_layers=getattr(self.cfg.baselines.graphgps_rwr_poly, "num_layers", 2),
+                        heads=getattr(self.cfg.baselines.graphgps_rwr_poly, "heads", 4),
+                        dropout=getattr(self.cfg.baselines.graphgps_rwr_poly, "dropout", 0.2),
+                        attn_dropout=getattr(self.cfg.baselines.graphgps_rwr_poly, "attn_dropout", 0.2),
+                        local_gnn=getattr(self.cfg.baselines.graphgps_rwr_poly, "local_gnn", "gcn"),
+                        attn_type=getattr(self.cfg.baselines.graphgps_rwr_poly, "attn_type", "multihead"),
+                        use_layer_norm=getattr(self.cfg.baselines.graphgps_rwr_poly, "use_layer_norm", True),
+                        activation=getattr(self.cfg.baselines.graphgps_rwr_poly, "activation", "relu"),
+                        lap_pe_dim=getattr(self.cfg.baselines.graphgps_rwr_poly, "lap_pe_dim", 0),
+                        standardize_features=getattr(self.cfg.baselines.graphgps_rwr_poly, "standardize_features", True),
+                        )
+            gps_train_cfg = GraphGPSTrainConfig(
+                        task=getattr(self.cfg.baselines.graphgps_rwr_poly, "task", "link_reconstruction"),
+                        epochs=getattr(self.cfg.baselines.graphgps_rwr_poly, "epochs", 200),
+                        lr=getattr(self.cfg.baselines.graphgps_rwr_poly, "lr", 5e-3),
+                        weight_decay=getattr(self.cfg.baselines.graphgps_rwr_poly, "weight_decay", 5e-4),
+                        patience=getattr(self.cfg.baselines.graphgps_rwr_poly, "patience", 30),
+                        edge_batch_size=getattr(self.cfg.baselines.graphgps_rwr_poly, "edge_batch_size", 8192),
+                        val_edge_fraction=getattr(self.cfg.baselines.graphgps_rwr_poly, "val_edge_fraction", 0.1),
+                        device=getattr(self.cfg.baselines.graphgps_rwr_poly, "device", "cpu"),
+                        random_state=getattr(self.cfg.baselines.graphgps_rwr_poly, "random_state", self.base_seed),
+                        verbose=getattr(self.cfg.baselines.graphgps_rwr_poly, "verbose", False),
+                        )
+            Z_graphgps_rwr_poly, _ = generate_graphgps_embedding(
+                        G=graph_data,
+                        variant=getattr(self.cfg.baselines.graphgps_rwr_poly, "variant", "poly_qcal_rwr"),
+                        nodelist=list(graph_data.nodes),
+                        embedding_dim=getattr(self.cfg.baselines.graphgps_rwr_poly, "embedding_dim", self.cfg.train.embedding_dim),
+                        ctqw_targets=q_targets,
+                        gps_config=gps_cfg,
+                        train_config=gps_train_cfg,
+                        )
+            store.add("graphgps_rwr_poly", Z_graphgps_rwr_poly)
         
         if self.cfg.compare_embeddings:
             # compare embeddings 
@@ -390,24 +1013,50 @@ class Pipeline:
 
         
     def _train_embeddings(self, graph_data, all_corpora):
-        embeddings = {} 
+        embeddings = {}
         
-        for kind, corpus in all_corpora.items(): 
+        for kind, corpus in all_corpora.items():
             Z = corpus_to_embedding(
-                                    corpus=corpus, 
+                                    corpus=corpus,
                                     nodes=graph_data.nodes,
-                                    vector_size=self.cfg.train.embedding_dim, 
+                                    vector_size=self.cfg.train.embedding_dim,
                                     window=self.cfg.train.window,
-                                    sg=self.cfg.train.sg, 
-                                    negative=self.cfg.train.negative, 
+                                    sg=self.cfg.train.sg,
+                                    negative=self.cfg.train.negative,
                                     min_count=self.cfg.min_count,
-                                    workers=self.cfg.train.workers, 
+                                    workers=self.cfg.train.workers,
                                     epochs=self.cfg.train.epochs
                                     )
             
             embeddings[kind] = Z
             
         return embeddings
+
+    def _build_quantum_targets(self, graph_data, source):
+        node_order = list(graph_data.nodes())
+        node_to_idx = {node: i for i, node in enumerate(node_order)}
+        valid_seeds = [node for node in source if node in node_to_idx]
+        if not valid_seeds:
+            return None
+
+        targets = []
+        max_support = getattr(self.cfg.baselines, "quantum_target_max_nodes", 64)
+        for center in valid_seeds:
+            lengths = nx.single_source_shortest_path_length(graph_data, center, cutoff=2)
+            support_nodes = [node for node, dist in lengths.items() if dist <= 2]
+            if center not in support_nodes:
+                support_nodes.append(center)
+            if len(support_nodes) > max_support:
+                support_nodes = support_nodes[:max_support]
+
+            center_idx = node_to_idx[center]
+            support_idx = np.array([node_to_idx[node] for node in support_nodes], dtype=np.int64)
+            dist = np.abs(support_idx - center_idx).astype(np.float64) + 1.0
+            p = 1.0 / dist
+            p = p / p.sum()
+            targets.append({"nodes": support_nodes, "center": center, "pQ": p})
+
+        return targets
     
     def _save_evaluation_results(self, all_results, nodes):
         

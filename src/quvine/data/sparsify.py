@@ -11,10 +11,13 @@ def materialize_undirected_simple_graph(G: nx.Graph) -> nx.Graph:
     """
     Return a fully materialized undirected simple nx.Graph (no views, no DiGraph internals).
     This avoids the weird KeyErrors you were seeing with adjacency traversal.
+    Preserves graph-level metadata and node attributes.
     """
     H = nx.Graph()
-    # nodes()
-    H.add_nodes_from(list(G.nodes()))
+    # Copy graph-level metadata
+    H.graph.update(G.graph)
+    # nodes with attributes
+    H.add_nodes_from(G.nodes(data=True))
     # edges() - if input is directed/multi, nx.Graph() will collapse direction/multiedges
     H.add_edges_from(list(G.edges()))
     return H

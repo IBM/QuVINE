@@ -691,13 +691,15 @@ def compute_graph_complexity_metrics(G: nx.Graph) -> Dict[str, float]:
     metrics.update(qa_metrics)
     
     # Add topological/geometric complexity metrics
-    # Note: Betti numbers can be expensive for large graphs, so make it optional
+    # Betti computation is thresholded by graph size to control runtime/memory
     try:
+        maxdim = 1 if G.number_of_nodes() >= 500 else 2
+        include_betti = G.number_of_nodes() <= 5000
         topo_metrics = compute_topological_metrics(
             G,
-            include_betti=G.number_of_nodes() < 500,  # Only for smaller graphs
-            include_persistence_entropy=G.number_of_nodes() < 500,
-            maxdim=2,
+            include_betti=include_betti,
+            include_persistence_entropy=include_betti,
+            maxdim=maxdim,
             filtration_scale=1.0
         )
         metrics.update(topo_metrics)

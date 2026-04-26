@@ -32,27 +32,20 @@ logger = logging.getLogger(__name__)
 # Helper Functions
 # ============================================================================
 
-def _normalize_laplacian(L: Union[np.ndarray, sp.spmatrix]) -> Union[np.ndarray, sp.spmatrix]:
-    """
-    Normalize Laplacian: L_norm = D^(-1/2) L D^(-1/2)
-    
-    Args:
-        L: Laplacian matrix (dense or sparse)
-    
-    Returns:
-        Normalized Laplacian
-    """
-    if sp.issparse(L):
-        # Sparse case
-        D = sp.diags(L.diagonal())
-        D_inv_sqrt = sp.diags(1.0 / np.sqrt(np.maximum(L.diagonal(), 1e-12)))
-        return D_inv_sqrt @ L @ D_inv_sqrt
-    else:
-        # Dense case
-        D = np.diag(np.diag(L))
-        D_inv_sqrt = np.diag(1.0 / np.sqrt(np.maximum(np.diag(L), 1e-12)))
-        return D_inv_sqrt @ L @ D_inv_sqrt
+def get_laplacian(G, normalize=True, weight="weight"):
+    nodelist = list(G.nodes())
+    node_to_idx = {node: i for i, node in enumerate(nodelist)}
 
+    if normalize:
+        L = nx.normalized_laplacian_matrix(
+            G, nodelist=nodelist, weight=weight
+        ).astype(float).tocsr()
+    else:
+        L = nx.laplacian_matrix(
+            G, nodelist=nodelist, weight=weight
+        ).astype(float).tocsr()
+
+    return L, nodelist, node_to_idx
 
 def _expm_multiply_restricted(
     L: Union[np.ndarray, sp.spmatrix],
@@ -218,7 +211,7 @@ def calibrate_polynomial_filter(
         
         # Stack basis vectors: Phi is |S| x (K+1)
         Phi = np.stack(basis, axis=1)
-        Phi = Phi / (np.linalg.norm(Phi, axis=0, keepdims=True) + 1e-12)  # Normalize columns
+        #Phi = Phi / (np.linalg.norm(Phi, axis=0, keepdims=True) + 1e-12)  # Normalize columns
         b = pQ
         
         # Accumulate normal equations: A^T A and A^T b
@@ -232,9 +225,7 @@ def calibrate_polynomial_filter(
     try:
         coeffs = np.linalg.solve(AtA, Atb)
     except np.linalg.LinAlgError:
-        logger.warning("Singular matrix in polynomial calibration, using fallback coefficients")
-        # Fallback: simple heat-like decay
-        coeffs = np.array([1.0] + [0.5 ** (k+1) for k in range(K)])
+        coeffs = np.linalg.lstsq(AtA, Atb, rcond=None)[0]
     
     # Validate coefficients - check if all are near zero
     if np.max(np.abs(coeffs)) < 1e-10:
@@ -347,16 +338,14 @@ def generate_quvine_heat_embedding(
     N = G.number_of_nodes()
     
     # Get Laplacian
-    L = nx.laplacian_matrix(G).astype(float)
-    if normalize:
-        L = _normalize_laplacian(L)
+    L = get_laplacian(G, normalize=True)
     
     # Create node to index mapping
     node_to_idx = {node: idx for idx, node in enumerate(G.nodes())}
     
     # Default time grid
     if t_grid is None:
-        t_grid = np.linspace(0.1, 5.0, 20)
+        t_grid = np.logspace(-2, 2, 40)
     
     # Calibrate heat kernel
     _, t_star = calibrate_heat_kernel(L, q_targets, t_grid, node_to_idx, loss='l2')
@@ -365,8 +354,10 @@ def generate_quvine_heat_embedding(
     if use_features and features is not None:
         X = features
     else:
-        X = np.random.randn(N, embedding_dim)
-        X = X / np.linalg.norm(X, axis=1, keepdims=True)  # Normalize rows
+        rng = np.random.default_rng(random_state)
+        X = rng.normal(size=(N, embedding_dim)) 
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-12)
     
     # Apply heat kernel filter
     Z = apply_heat_filter(L, X, t_star)
@@ -411,9 +402,7 @@ def generate_quvine_poly_embedding(
     N = G.number_of_nodes()
     
     # Get Laplacian
-    L = nx.laplacian_matrix(G).astype(float)
-    if normalize:
-        L = _normalize_laplacian(L)
+    L = get_laplacian(G, normalize=True)
     
     # Create node to index mapping
     node_to_idx = {node: idx for idx, node in enumerate(G.nodes())}
@@ -468,9 +457,7 @@ def generate_baseline_filter_embedding(
     N = G.number_of_nodes()
     
     # Get Laplacian
-    L = nx.laplacian_matrix(G).astype(float)
-    if normalize:
-        L = _normalize_laplacian(L)
+    L = get_laplacian(G, normalize=normalize)
     
     # Generate or use features
     if use_features and features is not None:

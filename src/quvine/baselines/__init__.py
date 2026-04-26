@@ -47,3 +47,19 @@ try:
     ])
 except ImportError:
     pass
+
+try:
+    from quvine.baselines.graphgps import (
+        GraphGPSConfig,
+        TrainConfig as GraphGPSTrainConfig,
+        generate_graphgps_embedding,
+        generate_multiple_graphgps_embeddings,
+    )
+    __all__.extend([
+        "GraphGPSConfig",
+        "GraphGPSTrainConfig",
+        "generate_graphgps_embedding",
+        "generate_multiple_graphgps_embeddings",
+    ])
+except ImportError:
+    pass

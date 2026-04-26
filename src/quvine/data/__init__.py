@@ -8,6 +8,7 @@ and graph complexity analysis utilities (including QBioCode integration).
 from .data_loader import load_graph, load_gwas_data, load_pegasus_results, load_seeds_and_targets
 from .prepare import prepare_graph, PrepareGraphConfig, keep_largest_connected_component
 from .random_graphs import (
+    # Original generators
     generate_erdos_renyi,
     generate_barabasi_albert,
     generate_watts_strogatz,
@@ -21,6 +22,18 @@ from .random_graphs import (
     add_hub_nodes,
     generate_graph_with_seeds_and_targets,
     get_graph_statistics,
+    # Extended generators
+    generate_random_regular_expander_like,
+    sweep_random_regular_expander_like,
+    generate_heterophilic_sbm,
+    sweep_heterophilic_sbm,
+    generate_degree_corrected_sbm,
+    sweep_degree_corrected_sbm,
+    generate_grid_torus_lattice,
+    sweep_grid_torus_lattice,
+    sample_degree_sequence,
+    generate_configuration_model_graph,
+    sweep_configuration_model_graphs,
 )
 # Import from new complexity module location
 from quvine.complexity.graph import (
@@ -56,7 +69,7 @@ __all__ = [
     'prepare_graph',
     'PrepareGraphConfig',
     'keep_largest_connected_component',
-    # Random graph generators
+    # Random graph generators (original)
     'generate_erdos_renyi',
     'generate_barabasi_albert',
     'generate_watts_strogatz',
@@ -70,6 +83,18 @@ __all__ = [
     'add_hub_nodes',
     'generate_graph_with_seeds_and_targets',
     'get_graph_statistics',
+    # Extended random graph generators
+    'generate_random_regular_expander_like',
+    'sweep_random_regular_expander_like',
+    'generate_heterophilic_sbm',
+    'sweep_heterophilic_sbm',
+    'generate_degree_corrected_sbm',
+    'sweep_degree_corrected_sbm',
+    'generate_grid_torus_lattice',
+    'sweep_grid_torus_lattice',
+    'sample_degree_sequence',
+    'generate_configuration_model_graph',
+    'sweep_configuration_model_graphs',
     # Graph complexity metrics
     'compute_laplacian_spectrum',
     'compute_spectral_gap',

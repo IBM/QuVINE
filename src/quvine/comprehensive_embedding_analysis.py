@@ -24,7 +24,7 @@ import json
 import logging
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -47,7 +47,7 @@ from quvine.data.random_graphs import (
     generate_modular_network,
     get_graph_statistics
 )
-from quvine.complexity.graph import compute_graph_complexity_metrics
+from quvine.complexity.graph_enhanced import compute_enhanced_complexity_metrics, ComplexityConfig
 from quvine.complexity.qbc import compute_qbc_metrics
 
 # Import baselines with fallback for missing dependencies
@@ -96,10 +96,21 @@ from quvine.embedding.quantum_filters import (
     generate_baseline_filter_embedding
 )
 
-from quvine.baselines.gcn_mf import (
-    generate_baseline_gcnmf_embedding, 
-    generate_quvine_gcnmf_embedding,
+from quvine.baselines.gat import (
+    generate_gat_embedding,
+    GATConfig,
+    TrainConfig,
 )
+try:
+    from quvine.baselines.graphgps import (
+        generate_graphgps_embedding,
+        GraphGPSConfig,
+        TrainConfig as GraphGPSTrainConfig,
+    )
+except ImportError:
+    generate_graphgps_embedding = None
+    GraphGPSConfig = None
+    GraphGPSTrainConfig = None
 from quvine.embedding.registry import EmbeddingStore
 
 
@@ -154,16 +165,9 @@ class ComprehensiveEmbeddingAnalysis:
         self.classification_results = []
         self.link_prediction_results = []
         
-        # Hyperparameter tuning storage
-        self.tuned_hyperparameters = {
-            'hgcnmf': None,    # Will store tuned params for heat GCN-MF
-            'pgcnmf': None,    # Will store tuned params for poly GCN-MF
-            'node2vec': None,  # Will store tuned params for Node2Vec
-            'netmf': None,     # Will store tuned params for NetMF
-            'rwr': None,       # Will store tuned params for RWR quantum walk
-            'ctqw': None,      # Will store tuned params for CTQW quantum walk
-            'dtqw': None       # Will store tuned params for DTQW quantum walk
-        }
+        # Hyperparameter tuning storage keyed by encountered network type.
+        # Shape: {network_type: {method_key: params_dict}}
+        self.tuned_hyperparameters: Dict[str, Dict[str, Dict[str, Any]]] = {}
         
     def _select_seeds_targets(self, G: nx.Graph) -> Tuple[List[int], List[int]]:
         """
@@ -200,11 +204,14 @@ class ComprehensiveEmbeddingAnalysis:
     
     def load_benchmark_networks(self) -> List[Tuple[str, nx.Graph, List[int], List[int]]]:
         """
-        Load real-world benchmark networks and synthetic benchmarks for testing.
+        Load synthetic benchmark networks for testing.
         
-        Includes:
-        - NetworkX built-in graphs (Karate Club, Les Miserables, etc.)
-        - Synthetic benchmarks from random_graphs.py (Watts-Strogatz, Powerlaw Cluster, etc.)
+        Includes synthetic benchmarks from random_graphs.py:
+        - Watts-Strogatz (small-world)
+        - Powerlaw Cluster (scale-free with clustering)
+        - Hierarchical Network
+        - Core-Periphery
+        - Erdos-Renyi (random)
         
         Returns
         -------
@@ -219,58 +226,8 @@ class ComprehensiveEmbeddingAnalysis:
             generate_erdos_renyi
         )
         
-        logger.info("Loading benchmark networks...")
+        logger.info("Loading synthetic benchmark networks...")
         networks = []
-        
-        # ===== NetworkX Built-in Graphs =====
-        
-        # 1. Karate Club (34 nodes)
-        try:
-            G = nx.karate_club_graph()
-            seeds, targets = self._select_seeds_targets(G)
-            networks.append(("benchmark_karate_club", G, seeds, targets))
-            logger.info(f"  Loaded Karate Club: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-        except Exception as e:
-            logger.warning(f"  Failed to load Karate Club: {e}")
-        
-        # 2. Dolphins social network (62 nodes)
-        try:
-            G = nx.read_gml("data/dolphins.gml", label='id')
-            seeds, targets = self._select_seeds_targets(G)
-            networks.append(("benchmark_dolphins", G, seeds, targets))
-            logger.info(f"  Loaded Dolphins: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-        except:
-            logger.info("  Dolphins network not available (optional)")
-        
-        # 3. Les Miserables (77 nodes)
-        try:
-            G = nx.les_miserables_graph()
-            seeds, targets = self._select_seeds_targets(G)
-            networks.append(("benchmark_les_miserables", G, seeds, targets))
-            logger.info(f"  Loaded Les Miserables: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-        except Exception as e:
-            logger.warning(f"  Failed to load Les Miserables: {e}")
-        
-        # 4. Davis Southern Women (32 nodes, bipartite)
-        try:
-            G = nx.davis_southern_women_graph()
-            # Convert to simple graph (project one mode)
-            women = {n for n, d in G.nodes(data=True) if d['bipartite'] == 0}
-            G_proj = nx.bipartite.projected_graph(G, women)
-            seeds, targets = self._select_seeds_targets(G_proj)
-            networks.append(("benchmark_davis_women", G_proj, seeds, targets))
-            logger.info(f"  Loaded Davis Women: {G_proj.number_of_nodes()} nodes, {G_proj.number_of_edges()} edges")
-        except Exception as e:
-            logger.warning(f"  Failed to load Davis Women: {e}")
-        
-        # 5. Florentine Families (15 nodes)
-        try:
-            G = nx.florentine_families_graph()
-            seeds, targets = self._select_seeds_targets(G)
-            networks.append(("benchmark_florentine", G, seeds, targets))
-            logger.info(f"  Loaded Florentine Families: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-        except Exception as e:
-            logger.warning(f"  Failed to load Florentine Families: {e}")
         
         # ===== Synthetic Benchmarks from random_graphs.py =====
         
@@ -405,6 +362,8 @@ class ComprehensiveEmbeddingAnalysis:
         """
         Compute complexity for a single network (for parallel execution).
         
+        Uses graph_enhanced metrics (36 comprehensive metrics) and QBC metrics.
+        
         Parameters
         ----------
         network_tuple : tuple
@@ -418,11 +377,22 @@ class ComprehensiveEmbeddingAnalysis:
         network_id, G, seeds, targets = network_tuple
         
         logger.info(f"Computing complexity for {network_id}...")
-        metrics = compute_graph_complexity_metrics(G)
+        
+        # Use enhanced complexity metrics with default config
+        config = ComplexityConfig(
+            spectral_k=64,
+            path_num_sources=64,
+            betweenness_k=256,
+            random_state=self.base_seed
+        )
+        metrics = compute_enhanced_complexity_metrics(G, config=config)
+        
+        # Add QBC metrics
         try:
             metrics.update(compute_qbc_metrics(G))
         except Exception as _qbc_exc:
             warnings.warn(f"QBC metrics failed for {network_id}: {_qbc_exc}")
+        
         metrics['network_id'] = network_id
         
         # Determine network type
@@ -1161,19 +1131,19 @@ class ComprehensiveEmbeddingAnalysis:
                     negative=hp.get('negative', 1),
                     seed=self.base_seed
                 )
-            elif network_id and network_id in self.tuned_hyperparameters and 'netmf' in self.tuned_hyperparameters[network_id]:
-                tuned_params = self.tuned_hyperparameters[network_id]['netmf']
-                logger.info(f"Using tuned NetMF hyperparameters for {network_id}: {tuned_params}")
-                return run_netmf(
-                    graph=G,
-                    nodes=nodes,
-                    dimensions=self.embedding_dim,
-                    window_size=tuned_params['window_size'],
-                    negative=tuned_params['negative'],
-                    rank=tuned_params.get('rank'),
-                    seed=self.base_seed
-                )
             else:
+                tuned_params = self._get_method_tuned_params('netmf', network_type=network_id) if network_id else None
+                if tuned_params is not None:
+                    logger.info(f"Using tuned NetMF hyperparameters for {network_id}: {tuned_params}")
+                    return run_netmf(
+                        graph=G,
+                        nodes=nodes,
+                        dimensions=self.embedding_dim,
+                        window_size=tuned_params['window_size'],
+                        negative=tuned_params['negative'],
+                        rank=tuned_params.get('rank'),
+                        seed=self.base_seed
+                    )
                 return run_netmf(
                     graph=G,
                     nodes=nodes,
@@ -1201,23 +1171,23 @@ class ComprehensiveEmbeddingAnalysis:
                     workers=4,
                     seed=self.base_seed
                 )
-            elif network_id and network_id in self.tuned_hyperparameters and 'node2vec' in self.tuned_hyperparameters[network_id]:
-                tuned_params = self.tuned_hyperparameters[network_id]['node2vec']
-                logger.info(f"Using tuned Node2Vec hyperparameters for {network_id}: {tuned_params}")
-                return run_node2vec(
-                    graph=G,
-                    nodes=nodes,
-                    dimensions=self.embedding_dim,
-                    walk_length=tuned_params['walk_length'],
-                    num_walks=tuned_params['num_walks'],
-                    p=tuned_params['p'],
-                    q=tuned_params['q'],
-                    window=tuned_params['window'],
-                    min_count=1,
-                    workers=4,
-                    seed=self.base_seed
-                )
             else:
+                tuned_params = self._get_method_tuned_params('node2vec', network_type=network_id) if network_id else None
+                if tuned_params is not None:
+                    logger.info(f"Using tuned Node2Vec hyperparameters for {network_id}: {tuned_params}")
+                    return run_node2vec(
+                        graph=G,
+                        nodes=nodes,
+                        dimensions=self.embedding_dim,
+                        walk_length=tuned_params['walk_length'],
+                        num_walks=tuned_params['num_walks'],
+                        p=tuned_params['p'],
+                        q=tuned_params['q'],
+                        window=tuned_params['window'],
+                        min_count=1,
+                        workers=4,
+                        seed=self.base_seed
+                    )
                 return run_node2vec(
                     graph=G,
                     nodes=nodes,
@@ -1249,6 +1219,20 @@ class ComprehensiveEmbeddingAnalysis:
                     seed=self.base_seed,
                 )
             else:
+                hp = self._get_method_tuned_params('graphsage', network_type=network_id) if network_id else None
+                if hp is not None:
+                    logger.info(f"Using tuned GraphSAGE hyperparameters for {network_id}: {hp}")
+                    return run_graphsage(
+                        graph=G,
+                        nodes=nodes,
+                        dimensions=hp.get('dimensions', self.embedding_dim),
+                        hidden_dim=hp.get('hidden_dim', min(256, self.embedding_dim * 2)),
+                        n_layers=hp.get('n_layers', 2),
+                        epochs=hp.get('epochs', 50),
+                        lr=hp.get('lr', 0.01),
+                        neg_samples=hp.get('neg_samples', 5),
+                        seed=self.base_seed,
+                    )
                 return run_graphsage(
                     graph=G,
                     nodes=nodes,
@@ -1280,6 +1264,23 @@ class ComprehensiveEmbeddingAnalysis:
                     seed=self.base_seed
                 )
             else:
+                hp = self._get_method_tuned_params('appnp', network_type=network_id) if network_id else None
+                if hp is not None:
+                    logger.info(f"Using tuned APPNP hyperparameters for {network_id}: {hp}")
+                    return run_appnp(
+                        graph=G,
+                        nodes=nodes,
+                        dimensions=hp.get('dimensions', self.embedding_dim),
+                        hidden_dim=hp.get('hidden_dim', 64),
+                        n_layers=hp.get('n_layers', 2),
+                        alpha=hp.get('alpha', 0.1),
+                        K=hp.get('K', 10),
+                        dropout=hp.get('dropout', 0.5),
+                        lr=hp.get('lr', 0.01),
+                        weight_decay=hp.get('weight_decay', 5e-4),
+                        epochs=hp.get('epochs', 200),
+                        seed=self.base_seed
+                    )
                 return run_appnp(
                     graph=G,
                     nodes=nodes,
@@ -1311,6 +1312,20 @@ class ComprehensiveEmbeddingAnalysis:
                     random_state=self.base_seed
                 )
             else:
+                hp = self._get_method_tuned_params('baseline_gcnmf', network_type=network_id) if network_id else None
+                if hp is not None:
+                    logger.info(f"Using tuned baseline_gcnmf hyperparameters for {network_id}: {hp}")
+                    return generate_baseline_gcnmf_embedding(
+                        G=G,
+                        embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                        hidden_dim=hp.get('hidden_dim', 64),
+                        mf_dim=hp.get('mf_dim', 64),
+                        n_layers=hp.get('n_layers', 2),
+                        epochs=hp.get('epochs', 200),
+                        lr=hp.get('lr', 0.01),
+                        weight_decay=hp.get('weight_decay', 5e-4),
+                        random_state=self.base_seed
+                    )
                 return generate_baseline_gcnmf_embedding(
                     G=G,
                     embedding_dim=self.embedding_dim,
@@ -1336,6 +1351,17 @@ class ComprehensiveEmbeddingAnalysis:
                     random_state=self.base_seed
                 )
             else:
+                hp = self._get_method_tuned_params('baseline_filter', network_type=network_id) if network_id else None
+                if hp is not None:
+                    logger.info(f"Using tuned baseline_filter hyperparameters for {network_id}: {hp}")
+                    return generate_baseline_filter_embedding(
+                        G=G,
+                        filter_type=hp.get('filter_type', 'heat'),
+                        t=hp.get('t', 1.0),
+                        embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                        normalize=hp.get('normalize', True),
+                        random_state=self.base_seed
+                    )
                 return generate_baseline_filter_embedding(
                     G=G,
                     filter_type='heat',
@@ -1349,9 +1375,16 @@ class ComprehensiveEmbeddingAnalysis:
             # QuVINE walk-based methods
             if cfg is None:
                 cfg = self._get_default_quvine_config()
+            hp = None
             if method_hyperparams and 'quvine_walks' in method_hyperparams:
                 hp = method_hyperparams['quvine_walks']
                 logger.info(f"Using best-tuned quvine_walks hyperparameters: {hp}")
+            elif network_id:
+                hp = self._get_method_tuned_params(method_name, network_type=network_id)
+                if hp is not None:
+                    logger.info(f"Using tuned {method_name} hyperparameters for {network_id}: {hp}")
+
+            if hp is not None:
                 cfg.walks.num_walks = hp.get('num_walks', cfg.walks.num_walks)
                 cfg.walks.num_walks_per_root = hp.get('num_walks', cfg.walks.num_walks_per_root)
                 cfg.walks.walk_length = hp.get('walk_length', cfg.walks.walk_length)
@@ -1495,7 +1528,10 @@ class ComprehensiveEmbeddingAnalysis:
             q_targets = self._generate_quantum_targets(G, seeds)
 
             if method_name == 'quvine_heat':
-                hp = (method_hyperparams or {}).get('baseline_filter_heat', {})
+                hp = (method_hyperparams or {}).get('baseline_filter_heat', None)
+                if hp is None and network_id:
+                    hp = self._get_method_tuned_params('quvine_heat', network_type=network_id)
+                hp = hp or {}
                 if hp:
                     logger.info(f"Using best-tuned quvine_heat hyperparameters: {hp}")
                 return generate_quvine_heat_embedding(
@@ -1506,7 +1542,10 @@ class ComprehensiveEmbeddingAnalysis:
                     random_state=self.base_seed
                 )
             elif method_name == 'quvine_poly':
-                hp = (method_hyperparams or {}).get('baseline_filter_poly', {})
+                hp = (method_hyperparams or {}).get('baseline_filter_poly', None)
+                if hp is None and network_id:
+                    hp = self._get_method_tuned_params('quvine_poly', network_type=network_id)
+                hp = hp or {}
                 if hp:
                     logger.info(f"Using best-tuned quvine_poly hyperparameters: {hp}")
                 return generate_quvine_poly_embedding(
@@ -1530,18 +1569,19 @@ class ComprehensiveEmbeddingAnalysis:
                 if _bp_gcnmf:
                     params = _bp_gcnmf
                     logger.info(f"Using best-tuned hyperparameters for hgcnmf: {params}")
-                elif self.tuned_hyperparameters['hgcnmf'] is not None:
-                    params = self.tuned_hyperparameters['hgcnmf']
-                    logger.info(f"Using tuned hyperparameters for hgcnmf: {params}")
                 else:
-                    params = {
-                        'hidden_dim': self.embedding_dim,
-                        'mf_dim': self.embedding_dim // 2,
-                        'n_layers': 2,
-                        'epochs': 200,
-                        'lr': 0.01,
-                        'weight_decay': 5e-4
-                    }
+                    params = self._get_method_tuned_params('quvine_hgcnmf', network_type=network_id) if network_id else None
+                    if params is not None:
+                        logger.info(f"Using tuned hyperparameters for hgcnmf ({network_id}): {params}")
+                    else:
+                        params = {
+                            'hidden_dim': self.embedding_dim,
+                            'mf_dim': self.embedding_dim // 2,
+                            'n_layers': 2,
+                            'epochs': 200,
+                            'lr': 0.01,
+                            'weight_decay': 5e-4
+                        }
 
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
@@ -1563,20 +1603,21 @@ class ComprehensiveEmbeddingAnalysis:
                 if _bp_gcnmf:
                     params = _bp_gcnmf
                     logger.info(f"Using best-tuned hyperparameters for pgcnmf: {params}")
-                elif self.tuned_hyperparameters['pgcnmf'] is not None:
-                    params = self.tuned_hyperparameters['pgcnmf']
-                    logger.info(f"Using tuned hyperparameters for pgcnmf: {params}")
                 else:
-                    params = {
-                        'K': 4,
-                        'ridge': 1e-6,
-                        'hidden_dim': self.embedding_dim,
-                        'mf_dim': self.embedding_dim // 2,
-                        'n_layers': 2,
-                        'epochs': 200,
-                        'lr': 0.01,
-                        'weight_decay': 5e-4
-                    }
+                    params = self._get_method_tuned_params('quvine_pgcnmf', network_type=network_id) if network_id else None
+                    if params is not None:
+                        logger.info(f"Using tuned hyperparameters for pgcnmf ({network_id}): {params}")
+                    else:
+                        params = {
+                            'K': 4,
+                            'ridge': 1e-6,
+                            'hidden_dim': self.embedding_dim,
+                            'mf_dim': self.embedding_dim // 2,
+                            'n_layers': 2,
+                            'epochs': 200,
+                            'lr': 0.01,
+                            'weight_decay': 5e-4
+                        }
 
                 embeddings, _ = generate_quvine_gcnmf_embedding(
                     G=G,
@@ -1595,9 +1636,422 @@ class ComprehensiveEmbeddingAnalysis:
                     random_state=self.base_seed
                 )
                 return embeddings
+
+        elif method_name in [
+            'baseline_graphgps',
+            'graphgps_rwr',
+            'graphgps_ctqw_heat',
+            'graphgps_ctqw_poly',
+            'graphgps_rwr_heat',
+            'graphgps_rwr_poly',
+            'graphgps_dtqw_heat',
+            'graphgps_dtqw_poly',
+        ]:
+            if generate_graphgps_embedding is None or GraphGPSConfig is None or GraphGPSTrainConfig is None:
+                raise ImportError("GraphGPS baseline requires quvine.baselines.graphgps and PyG dependencies")
+
+            nodes = list(G.nodes())
+            ctqw_targets = self._generate_quantum_targets(G, seeds)
+            dtqw_targets = self._generate_quantum_targets(G, seeds)
+            hp = (method_hyperparams or {}).get('graphgps', None)
+            if hp is None and network_id:
+                hp = self._get_method_tuned_params(method_name, network_type=network_id)
+            hp = hp or {}
+
+            gps_config = GraphGPSConfig(
+                hidden_dim=hp.get('hidden_dim', 64),
+                output_dim=hp.get('embedding_dim', self.embedding_dim),
+                num_layers=hp.get('num_layers', 2),
+                heads=hp.get('heads', 4),
+                dropout=hp.get('dropout', 0.2),
+                attn_dropout=hp.get('attn_dropout', 0.2),
+                local_gnn=hp.get('local_gnn', 'gcn'),
+                attn_type=hp.get('attn_type', 'multihead'),
+                use_layer_norm=hp.get('use_layer_norm', True),
+                activation=hp.get('activation', 'relu'),
+                lap_pe_dim=hp.get('lap_pe_dim', 0),
+                standardize_features=hp.get('standardize_features', True),
+            )
+            train_config = GraphGPSTrainConfig(
+                task='link_reconstruction',
+                epochs=hp.get('epochs', 200),
+                lr=hp.get('lr', 5e-3),
+                weight_decay=hp.get('weight_decay', 5e-4),
+                patience=hp.get('patience', 30),
+                edge_batch_size=hp.get('edge_batch_size', 8192),
+                val_edge_fraction=hp.get('val_edge_fraction', 0.1),
+                device=hp.get('device', 'cpu'),
+                random_state=self.base_seed,
+                verbose=hp.get('verbose', False),
+            )
+
+            variant_map = {
+                'baseline_graphgps': 'raw',
+                'graphgps_rwr': 'rwr',
+                'graphgps_ctqw_heat': 'heat_qcal_ctqw',
+                'graphgps_ctqw_poly': 'poly_qcal_ctqw',
+                'graphgps_rwr_heat': 'heat_qcal_rwr',
+                'graphgps_rwr_poly': 'poly_qcal_rwr',
+                'graphgps_dtqw_heat': 'heat_qcal_dtqw',
+                'graphgps_dtqw_poly': 'poly_qcal_dtqw',
+            }
+            variant = variant_map[method_name]
+
+            kwargs = {
+                'G': G,
+                'variant': variant,
+                'nodelist': nodes,
+                'embedding_dim': hp.get('embedding_dim', self.embedding_dim),
+                'gps_config': gps_config,
+                'train_config': train_config,
+            }
+            if '_ctqw' in variant:
+                kwargs['ctqw_targets'] = ctqw_targets
+            elif '_dtqw' in variant:
+                kwargs['dtqw_targets'] = dtqw_targets
+            elif '_rwr' in variant:
+                kwargs['ctqw_targets'] = ctqw_targets
+
+            embeddings, _ = generate_graphgps_embedding(**kwargs)
+            return embeddings
         
         else:
             raise ValueError(f"Unknown method: {method_name}")
+
+    def _get_network_type_key(self, network_type: Optional[str]) -> str:
+        """Normalize a caller-provided network type into a stable cache key."""
+        if network_type is None:
+            return "unknown"
+        key = str(network_type).strip()
+        return key if key else "unknown"
+
+    def _get_method_tuned_params(
+        self,
+        method_name: str,
+        network_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return tuned hyperparameters for one method and network type, if present."""
+        type_key = self._get_network_type_key(network_type)
+        by_type = self.tuned_hyperparameters.get(type_key, {})
+        return by_type.get(method_name)
+
+    def _store_method_tuned_params(
+        self,
+        method_name: str,
+        params: Optional[Dict[str, Any]],
+        network_type: Optional[str] = None,
+    ) -> None:
+        """Persist tuned hyperparameters for one method and network type."""
+        if not params:
+            return
+        type_key = self._get_network_type_key(network_type)
+        if type_key not in self.tuned_hyperparameters:
+            self.tuned_hyperparameters[type_key] = {}
+        self.tuned_hyperparameters[type_key][method_name] = dict(params)
+
+    def _evaluate_embedding_recall_at_k(
+        self,
+        embedding: np.ndarray,
+        val_seeds: List[int],
+        k: int = 50,
+    ) -> float:
+        """Shared validation metric used for hyperparameter tuning."""
+        if embedding is None or len(val_seeds) == 0:
+            return 0.0
+        scores_centroid = seed_centroid_scores(embedding, val_seeds)
+        top_k = min(k, int(embedding.shape[0]) - 1) if embedding.shape[0] > 1 else 1
+        top_k_indices = np.argsort(scores_centroid)[-top_k:]
+        hits = sum(1 for seed in val_seeds if seed in top_k_indices)
+        return hits / len(val_seeds) if len(val_seeds) > 0 else 0.0
+
+    def _split_tuning_seeds(
+        self,
+        seeds: List[int],
+    ) -> Tuple[List[int], List[int]]:
+        """Create a deterministic train/validation seed split for tuning."""
+        np.random.seed(self.base_seed)
+        n_val = max(1, len(seeds) // 5)
+        val_indices = np.random.choice(len(seeds), size=n_val, replace=False)
+        train_seeds = [s for i, s in enumerate(seeds) if i not in val_indices]
+        val_seeds = [s for i, s in enumerate(seeds) if i in val_indices]
+        return train_seeds, val_seeds
+
+    def tune_method_hyperparameters(
+        self,
+        method_name: str,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        network_type: Optional[str] = None,
+        n_trials: int = 20,
+        timeout: int = 600,
+        n_jobs_optuna: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Tune one embedding method for a given network type and cache the result.
+
+        Returns a plain best-params dict, or None if tuning is skipped/unavailable.
+        """
+        cached = self._get_method_tuned_params(method_name, network_type=network_type)
+        if cached is not None:
+            logger.info(
+                "Using cached tuned hyperparameters for method=%s network_type=%s",
+                method_name,
+                self._get_network_type_key(network_type),
+            )
+            return cached
+
+        if not OPTUNA_AVAILABLE:
+            logger.warning("Optuna not available; skipping tuning for %s", method_name)
+            return None
+
+        if len(seeds) < 2:
+            logger.warning("Not enough seeds to tune %s; skipping tuning", method_name)
+            return None
+
+        type_key = self._get_network_type_key(network_type)
+        logger.info("Tuning method=%s for encountered network_type=%s", method_name, type_key)
+
+        if method_name == 'node2vec':
+            result = self.tune_node2vec_hyperparameters(
+                G, seeds, targets, n_trials=n_trials, timeout=timeout, n_jobs_optuna=n_jobs_optuna
+            )
+            params = result['best_params']
+        elif method_name == 'netmf':
+            result = self.tune_netmf_hyperparameters(
+                G, seeds, targets, n_trials=min(n_trials, 30), timeout=timeout, n_jobs_optuna=n_jobs_optuna
+            )
+            params = result['best_params']
+        elif method_name == 'quvine_hgcnmf':
+            result = self.tune_qcaliber_gcnmf_hyperparameters(
+                G, seeds, targets, diffusion_type='heat', n_trials=n_trials, timeout=timeout
+            )
+            params = None if result is None else result['best_params']
+        elif method_name == 'quvine_pgcnmf':
+            result = self.tune_qcaliber_gcnmf_hyperparameters(
+                G, seeds, targets, diffusion_type='poly', n_trials=n_trials, timeout=timeout
+            )
+            params = None if result is None else result['best_params']
+        elif method_name == 'quvine_rwr':
+            result = self.tune_quantum_walk_hyperparameters(
+                G, seeds, targets, walk_type='rwr', n_trials=n_trials, timeout=timeout
+            )
+            params = None if result is None else result['best_params']
+        elif method_name == 'quvine_ctqw':
+            result = self.tune_quantum_walk_hyperparameters(
+                G, seeds, targets, walk_type='ctqw', n_trials=n_trials, timeout=timeout
+            )
+            params = None if result is None else result['best_params']
+        elif method_name == 'quvine_dtqw':
+            result = self.tune_quantum_walk_hyperparameters(
+                G, seeds, targets, walk_type='dtqw', n_trials=n_trials, timeout=timeout
+            )
+            params = None if result is None else result['best_params']
+        else:
+            train_seeds, val_seeds = self._split_tuning_seeds(seeds)
+
+            def objective(trial):
+                try:
+                    hp: Dict[str, Dict[str, Any]] = {}
+
+                    if method_name == 'graphsage':
+                        hp['graphsage'] = {
+                            'dimensions': self.embedding_dim,
+                            'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256]),
+                            'n_layers': trial.suggest_int('n_layers', 1, 3),
+                            'epochs': trial.suggest_int('epochs', 25, 100, step=25),
+                            'lr': trial.suggest_float('lr', 1e-3, 5e-2, log=True),
+                            'neg_samples': trial.suggest_int('neg_samples', 2, 8),
+                        }
+                    elif method_name == 'appnp':
+                        hp['appnp'] = {
+                            'dimensions': self.embedding_dim,
+                            'hidden_dim': trial.suggest_categorical('hidden_dim', [32, 64, 128]),
+                            'n_layers': trial.suggest_int('n_layers', 1, 3),
+                            'alpha': trial.suggest_float('alpha', 0.05, 0.3),
+                            'K': trial.suggest_int('K', 5, 20),
+                            'dropout': trial.suggest_float('dropout', 0.0, 0.6),
+                            'lr': trial.suggest_float('lr', 1e-3, 5e-2, log=True),
+                            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
+                            'epochs': trial.suggest_int('epochs', 50, 250, step=50),
+                        }
+                    elif method_name == 'baseline_gcnmf':
+                        hp['baseline_gcnmf'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256]),
+                            'mf_dim': trial.suggest_categorical('mf_dim', [32, 64, 128]),
+                            'n_layers': trial.suggest_int('n_layers', 1, 3),
+                            'epochs': trial.suggest_int('epochs', 100, 300, step=50),
+                            'lr': trial.suggest_float('lr', 1e-3, 5e-2, log=True),
+                            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
+                        }
+                    elif method_name == 'baseline_filter':
+                        hp['baseline_filter_heat'] = {
+                            'filter_type': 'heat',
+                            't': trial.suggest_float('t', 1e-2, 10.0, log=True),
+                            'embedding_dim': self.embedding_dim,
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_heat':
+                        hp['baseline_filter_heat'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_poly':
+                        hp['baseline_filter_poly'] = {
+                            'K': trial.suggest_int('K', 2, 6),
+                            'embedding_dim': self.embedding_dim,
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name in ['baseline_gat', 'gat_ctqw_heat', 'gat_ctqw_poly', 'gat_dtqw_heat', 'gat_dtqw_poly', 'gat_rwr_heat', 'gat_rwr_poly']:
+                        hp['gat'] = {
+                            'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256]),
+                            'embedding_dim': self.embedding_dim,
+                            'num_layers': trial.suggest_int('num_layers', 1, 3),
+                            'heads': trial.suggest_categorical('heads', [1, 2, 4]),
+                            'dropout': trial.suggest_float('dropout', 0.0, 0.6),
+                            'attention_dropout': trial.suggest_float('attention_dropout', 0.0, 0.5),
+                            'negative_slope': trial.suggest_float('negative_slope', 0.1, 0.3),
+                            'residual': trial.suggest_categorical('residual', [True, False]),
+                            'epochs': trial.suggest_int('epochs', 50, 250, step=50),
+                            'lr': trial.suggest_float('lr', 1e-3, 2e-2, log=True),
+                            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
+                            'patience': trial.suggest_int('patience', 10, 40, step=5),
+                            'edge_batch_size': trial.suggest_categorical('edge_batch_size', [2048, 4096, 8192]),
+                            'val_edge_fraction': trial.suggest_float('val_edge_fraction', 0.05, 0.2),
+                        }
+                    elif method_name in ['baseline_graphgps', 'graphgps_rwr', 'graphgps_ctqw_heat', 'graphgps_ctqw_poly', 'graphgps_rwr_heat', 'graphgps_rwr_poly', 'graphgps_dtqw_heat', 'graphgps_dtqw_poly']:
+                        hp['graphgps'] = {
+                            'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256]),
+                            'embedding_dim': self.embedding_dim,
+                            'num_layers': trial.suggest_int('num_layers', 1, 3),
+                            'heads': trial.suggest_categorical('heads', [1, 2, 4]),
+                            'dropout': trial.suggest_float('dropout', 0.0, 0.5),
+                            'attn_dropout': trial.suggest_float('attn_dropout', 0.0, 0.5),
+                            'local_gnn': trial.suggest_categorical('local_gnn', ['gcn', 'sage', 'gat', 'none']),
+                            'use_layer_norm': trial.suggest_categorical('use_layer_norm', [True, False]),
+                            'lap_pe_dim': trial.suggest_categorical('lap_pe_dim', [0, 4, 8]),
+                            'standardize_features': trial.suggest_categorical('standardize_features', [True, False]),
+                            'epochs': trial.suggest_int('epochs', 50, 250, step=50),
+                            'lr': trial.suggest_float('lr', 1e-3, 2e-2, log=True),
+                            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
+                            'patience': trial.suggest_int('patience', 10, 40, step=5),
+                            'edge_batch_size': trial.suggest_categorical('edge_batch_size', [2048, 4096, 8192]),
+                            'val_edge_fraction': trial.suggest_float('val_edge_fraction', 0.05, 0.2),
+                        }
+                    else:
+                        logger.info("No tuner defined for %s; skipping", method_name)
+                        return 0.0
+
+                    embedding = self.run_embedding_method(
+                        method_name=method_name,
+                        G=G,
+                        seeds=train_seeds,
+                        targets=targets,
+                        network_id=type_key,
+                        method_hyperparams=hp,
+                    )
+                    return self._evaluate_embedding_recall_at_k(embedding, val_seeds)
+
+                except Exception as e:
+                    logger.warning("Tuning trial failed for %s: %s", method_name, e)
+                    return 0.0
+
+            sampler = TPESampler(seed=self.base_seed)
+            study = optuna.create_study(
+                direction='maximize',
+                sampler=sampler,
+                study_name=f'{method_name}_{type_key}_tuning',
+            )
+            study.optimize(
+                objective,
+                n_trials=n_trials,
+                timeout=timeout,
+                n_jobs=n_jobs_optuna,
+                show_progress_bar=True,
+            )
+            params = study.best_params if len(study.trials) > 0 else None
+
+            if params is not None:
+                if method_name == 'graphsage':
+                    params['dimensions'] = self.embedding_dim
+                elif method_name == 'appnp':
+                    params['dimensions'] = self.embedding_dim
+                elif method_name == 'baseline_gcnmf':
+                    params['embedding_dim'] = self.embedding_dim
+                elif method_name == 'baseline_filter':
+                    params['filter_type'] = 'heat'
+                    params['embedding_dim'] = self.embedding_dim
+                elif method_name == 'quvine_heat':
+                    params['embedding_dim'] = self.embedding_dim
+                elif method_name == 'quvine_poly':
+                    params['embedding_dim'] = self.embedding_dim
+                elif method_name in ['baseline_gat', 'gat_ctqw_heat', 'gat_ctqw_poly', 'gat_dtqw_heat', 'gat_dtqw_poly', 'gat_rwr_heat', 'gat_rwr_poly']:
+                    params['embedding_dim'] = self.embedding_dim
+                elif method_name in ['baseline_graphgps', 'graphgps_rwr', 'graphgps_ctqw_heat', 'graphgps_ctqw_poly', 'graphgps_rwr_heat', 'graphgps_rwr_poly', 'graphgps_dtqw_heat', 'graphgps_dtqw_poly']:
+                    params['embedding_dim'] = self.embedding_dim
+
+        self._store_method_tuned_params(method_name, params, network_type=type_key)
+        return params
+
+    def ensure_tuned_hyperparameters_for_network_type(
+        self,
+        G: nx.Graph,
+        seeds: List[int],
+        targets: List[int],
+        network_type: Optional[str],
+        methods: List[str],
+        n_trials: int = 20,
+        timeout: int = 600,
+        n_jobs_optuna: int = 1,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Tune each requested method exactly once for a dataset/network type.
+
+        The first encountered repetition/iteration for that dataset type performs
+        tuning and stores the best hyperparameters in-memory. All subsequent
+        repetitions for the same dataset type reuse the cached values.
+        """
+        type_key = self._get_network_type_key(network_type)
+        if type_key not in self.tuned_hyperparameters:
+            self.tuned_hyperparameters[type_key] = {}
+
+        cached_methods = self.tuned_hyperparameters[type_key]
+        if methods and all(method_name in cached_methods for method_name in methods):
+            logger.info(
+                "All requested methods already tuned for network_type=%s; reusing cached hyperparameters across repetitions",
+                type_key,
+            )
+            return cached_methods
+
+        for method_name in methods:
+            if self._get_method_tuned_params(method_name, network_type=type_key) is not None:
+                logger.info(
+                    "Skipping tuning for method=%s network_type=%s because first-iteration hyperparameters already exist",
+                    method_name,
+                    type_key,
+                )
+                continue
+            try:
+                self.tune_method_hyperparameters(
+                    method_name=method_name,
+                    G=G,
+                    seeds=seeds,
+                    targets=targets,
+                    network_type=type_key,
+                    n_trials=n_trials,
+                    timeout=timeout,
+                    n_jobs_optuna=n_jobs_optuna,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to tune method=%s for network_type=%s: %s",
+                    method_name,
+                    type_key,
+                    e,
+                )
+
+        return self.tuned_hyperparameters[type_key]
     
     def _generate_quantum_targets(
         self,
@@ -2100,17 +2554,20 @@ class ComprehensiveEmbeddingAnalysis:
         """
         network_id, G, seeds, targets = network_tuple
         methods = [
-            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',           # Original quantum walks
-            'quvine_heat', 'quvine_poly',                          # Q-Caliber filters
-            'quvine_hgcnmf', 'quvine_pgcnmf',                     # Q-Caliber GCN-MF
-            'quvine_fused_svd',                                    # SVD fusion
-            'quvine_fused_graphreg',                               # Graph-regularized fusion
-            'quvine_fused_attention',                              # Attention fusion
-            'quvine_fused_hybrid',                                 # Hybrid fusion
-            'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
-            'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
-            'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
-            'netmf', 'node2vec', 'appnp'                           # Other baselines
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',
+            'quvine_heat', 'quvine_poly',
+            'quvine_hgcnmf', 'quvine_pgcnmf',
+            'baseline_gat', 'graphgps_rwr', 'baseline_graphgps',
+            'gat_ctqw_heat', 'gat_ctqw_poly',
+            'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
+            'graphgps_rwr_heat', 'graphgps_rwr_poly',
+            'graphgps_dtqw_heat', 'graphgps_dtqw_poly',
+            'graphsage', 'netmf', 'node2vec', 'appnp',
+            'quvine_fused_svd', 'quvine_fused_graphreg',
+            'quvine_fused_attention', 'quvine_fused_hybrid',
+            'quvine_fused_svd_shared_priv_heat_poly',
+            'quvine_fused_svd_shared_priv_moe_heat_poly',
+            'baseline_gcnmf',
         ]
         
         ranking_results = []
@@ -2165,17 +2622,20 @@ class ComprehensiveEmbeddingAnalysis:
         Evaluates multiple downstream tasks: ranking, classification, link prediction.
         """
         methods = [
-            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',           # Original quantum walks
-            'quvine_heat', 'quvine_poly',                          # Q-Caliber filters
-            'quvine_hgcnmf', 'quvine_pgcnmf',                     # Q-Caliber GCN-MF
-            'quvine_fused_svd',                                    # SVD fusion
-            'quvine_fused_graphreg',                               # Graph-regularized fusion
-            'quvine_fused_attention',                              # Attention fusion
-            'quvine_fused_hybrid',                                 # Hybrid fusion
-            'quvine_fused_svd_shared_priv_heat_poly',            # SVD shared/private (attention)
-            'quvine_fused_svd_shared_priv_moe_heat_poly',        # SVD shared/private (MoE)
-            'baseline_gcnmf',                                      # Baseline GCN-MF (no quantum calibration)
-            'netmf', 'node2vec', 'appnp'                           # Other baselines
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',
+            'quvine_heat', 'quvine_poly',
+            'quvine_hgcnmf', 'quvine_pgcnmf',
+            'baseline_gat', 'graphgps_rwr', 'baseline_graphgps',
+            'gat_ctqw_heat', 'gat_ctqw_poly',
+            'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
+            'graphgps_rwr_heat', 'graphgps_rwr_poly',
+            'graphgps_dtqw_heat', 'graphgps_dtqw_poly',
+            'graphsage', 'netmf', 'node2vec', 'appnp',
+            'quvine_fused_svd', 'quvine_fused_graphreg',
+            'quvine_fused_attention', 'quvine_fused_hybrid',
+            'quvine_fused_svd_shared_priv_heat_poly',
+            'quvine_fused_svd_shared_priv_moe_heat_poly',
+            'baseline_gcnmf',
         ]
         
         logger.info(f"Running {len(methods)} methods on {len(networks)} networks in parallel...")
@@ -3006,6 +3466,11 @@ def run_single_network_analysis(
             'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused-walk',
             'quvine_heat', 'quvine_poly', 'quvine_fused-filt',
             'quvine_hgcnmf', 'quvine_pgcnmf', 'quvine_fused-gcnmf',
+            'baseline_gat', 'gat_ctqw_heat', 'gat_ctqw_poly',
+            'baseline_graphgps', 'graphgps_rwr',
+            'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
+            'graphgps_rwr_heat', 'graphgps_rwr_poly',
+            'graphgps_dtqw_heat', 'graphgps_dtqw_poly',
             'node2vec', 'netmf', 'baseline_filter', 'baseline_gcnmf',
             'graphsage', 'appnp',
         ]
@@ -3056,6 +3521,20 @@ def run_single_network_analysis(
         base_seed=42,
     )
     
+    _network_type = network_metadata.get('type', 'unknown')
+    _dataset_key = f"{_network_type}_n{G.number_of_nodes()}"
+
+    temp_analysis.ensure_tuned_hyperparameters_for_network_type(
+        G=G,
+        seeds=seeds,
+        targets=targets,
+        network_type=_dataset_key,
+        methods=embedding_methods,
+        n_trials=20,
+        timeout=600,
+        n_jobs_optuna=1,
+    )
+
     # Step 1: Compute complexity metrics
     if verbose:
         logger.info("Step 1/4: Computing complexity metrics...")
@@ -3066,7 +3545,7 @@ def run_single_network_analysis(
     except Exception as _qbc_exc:
         warnings.warn(f"QBC metrics failed for {network_id}: {_qbc_exc}")
     complexity_metrics['network_id'] = network_id
-    complexity_metrics['network_type'] = network_metadata.get('type', 'unknown')
+    complexity_metrics['network_type'] = _network_type
     complexity_metrics['n_nodes'] = G.number_of_nodes()
     complexity_metrics['n_edges'] = G.number_of_edges()
     
@@ -3093,6 +3572,7 @@ def run_single_network_analysis(
     method_embeddings: Dict[str, np.ndarray] = {}   # kept for degree/distance analysis
 
     _network_type = network_metadata.get('type', 'unknown')
+    _dataset_key = f"{_network_type}_n{G.number_of_nodes()}"
 
     # ── Resume: load existing results and determine which methods to skip ─────
     methods_done: set = set()
@@ -3151,7 +3631,12 @@ def run_single_network_analysis(
             # Generate embedding — timed
             t0 = time.perf_counter()
             embedding = temp_analysis.run_embedding_method(
-                method, G, seeds, targets, method_hyperparams=method_hyperparams
+                method,
+                G,
+                seeds,
+                targets,
+                network_id=_network_type,
+                method_hyperparams=method_hyperparams,
             )
             elapsed_embedding = time.perf_counter() - t0
 
