@@ -12,15 +12,18 @@
   <img src="./images/quvine_framework.png" alt="QuVINE Framework" width="600" height="400">
 </p>
 
-**QuVINE** is a comprehensive framework for **Qu**antum and classical **V**iew-based **N**etwork **E**mbeddings. It combines quantum walk-based methods with classical approaches to generate high-quality graph embeddings for biological networks, social networks, and complex systems analysis.
+**QuVINE** is a comprehensive framework for **Qu**antum and classical **V**iew-based **N**etwork **E**mbeddings. It combines quantum walk-based methods with state-of-the-art classical approaches to generate high-quality graph embeddings for biological networks, social networks, and complex systems analysis.
 
 ## 🌟 Key Features
 
+- **39 Embedding Methods**: 16 quantum and 23 classical methods spanning multiple architectures
 - **Quantum Walk Embeddings**: Continuous-Time Quantum Walk (CTQW) and Discrete-Time Quantum Walk (DTQW)
-- **Classical Baselines**: Random Walk with Restart (RWR), Node2Vec, NetMF, GCN, GAT, GraphGPS
-- **Multi-View Fusion**: Combine multiple embedding perspectives for enhanced performance
+- **Modern Architectures**: Graph Attention Networks (GAT) and Graph Transformers (GraphGPS)
+- **Classical Baselines**: Random Walk with Restart (RWR), Node2Vec, NetMF, GCN, GraphSAGE, APPNP
+- **Multi-View Fusion**: Hierarchical fusion strategy combining quantum and classical perspectives
 - **Complexity Analysis**: Comprehensive graph complexity metrics including spectral, quantum-inspired, and participation measures
 - **Downstream Tasks**: Node classification, link prediction, and node ranking evaluation
+- **Hyperparameter Tuning**: Automated Optuna-based hyperparameter optimization
 - **HPC-Ready**: Parallelized workflows optimized for high-performance computing clusters
 - **Biological Applications**: Specialized support for protein-protein interaction networks and disease gene analysis
 
@@ -33,6 +36,79 @@ QuVINE has been extensively evaluated across:
 - **Disease-specific analyses** (Asthma, Autism, Schizophrenia)
 
 Results show quantum methods provide advantages on networks with specific structural properties, particularly those with strong community structure and intermediate spectral complexity.
+
+## 🔬 Complete Method Registry
+
+QuVINE implements **39 methods** organized into 5 categories:
+
+### 1. SGNS (Skip-Gram with Negative Sampling) - 3 methods
+- `quvine_rwr` - Random Walk with Restart (classical)
+- `quvine_ctqw` - Continuous-Time Quantum Walk (quantum)
+- `quvine_dtqw` - Discrete-Time Quantum Walk (quantum)
+
+### 2. Graph Filters - 6 methods
+- `quvine_baseline_heat` - Heat kernel filter, no walk (classical)
+- `quvine_baseline_poly` - Polynomial filter, no walk (classical)
+- `quvine_rwr_heat` - RWR + heat filter (classical)
+- `quvine_rwr_poly` - RWR + polynomial filter (classical)
+- `quvine_ctqw_heat` - CTQW + heat filter (quantum)
+- `quvine_ctqw_poly` - CTQW + polynomial filter (quantum)
+
+### 3. GAT (Graph Attention Networks) - 12 methods
+
+**Baseline:**
+- `gat_baseline` - GAT without quantum calibration (classical)
+
+**With filters only:**
+- `gat_heat` - GAT + heat filter, no walk (classical)
+- `gat_poly` - GAT + polynomial filter, no walk (classical)
+
+**With walks only:**
+- `gat_rwr` - GAT + RWR (classical)
+- `gat_ctqw` - GAT + CTQW (quantum)
+- `gat_dtqw` - GAT + DTQW (quantum)
+
+**With walks + filters:**
+- `gat_rwr_heat` - GAT + RWR + heat filter (classical)
+- `gat_rwr_poly` - GAT + RWR + polynomial filter (classical)
+- `gat_ctqw_heat` - GAT + CTQW + heat filter (quantum)
+- `gat_ctqw_poly` - GAT + CTQW + polynomial filter (quantum)
+- `gat_dtqw_heat` - GAT + DTQW + heat filter (quantum)
+- `gat_dtqw_poly` - GAT + DTQW + polynomial filter (quantum)
+
+### 4. GraphGPS (Graph Transformer) - 12 methods
+
+**Baseline:**
+- `graphgps_baseline` - GraphGPS without quantum calibration (classical)
+
+**With filters only:**
+- `graphgps_heat` - GraphGPS + heat filter, no walk (classical)
+- `graphgps_poly` - GraphGPS + polynomial filter, no walk (classical)
+
+**With walks only:**
+- `graphgps_rwr` - GraphGPS + RWR (classical)
+- `graphgps_ctqw` - GraphGPS + CTQW (quantum)
+- `graphgps_dtqw` - GraphGPS + DTQW (quantum)
+
+**With walks + filters:**
+- `graphgps_rwr_heat` - GraphGPS + RWR + heat filter (classical)
+- `graphgps_rwr_poly` - GraphGPS + RWR + polynomial filter (classical)
+- `graphgps_ctqw_heat` - GraphGPS + CTQW + heat filter (quantum)
+- `graphgps_ctqw_poly` - GraphGPS + CTQW + polynomial filter (quantum)
+- `graphgps_dtqw_heat` - GraphGPS + DTQW + heat filter (quantum)
+- `graphgps_dtqw_poly` - GraphGPS + DTQW + polynomial filter (quantum)
+
+### 5. Classical Baselines - 6 methods
+- `node2vec` - Node2Vec (classical)
+- `netmf` - Network Embedding as Matrix Factorization (classical)
+- `graphsage` - GraphSAGE (classical)
+- `appnp` - Approximate Personalized Propagation of Neural Predictions (classical)
+- `baseline_filter` - Classical filter baseline (classical)
+- `baseline_gcnmf` - Classical GCN-MF baseline (classical)
+
+**Total: 16 quantum methods, 23 classical methods**
+
+For complete details, see [METHOD_REGISTRY.md](./METHOD_REGISTRY.md).
 
 ## 🚀 Quick Start
 
@@ -86,27 +162,41 @@ results = evaluate_node_ranking(G, embeddings)
 print(f"Precision@10: {results['precision@10']:.3f}")
 ```
 
-### Example: Comprehensive Analysis
+### Example: Run All 39 Methods
 
 ```python
 from quvine.comprehensive_embedding_analysis import ComprehensiveEmbeddingAnalysis
 
-# Initialize analysis
+# Initialize analysis with all methods
 analysis = ComprehensiveEmbeddingAnalysis(
     n_networks_per_type=20,
     n_nodes=200,
     embedding_dim=128,
-    output_dir='outputs/my_analysis'
+    output_dir='outputs/all_methods',
+    embedding_methods='all'  # Uses all 39 methods
 )
 
 # Run complete analysis
 results = analysis.run_complete_analysis()
 
 # Results include:
-# - Embedding performance metrics
+# - Performance metrics for all 39 methods
 # - Complexity correlations
 # - Method recommendations
+# - Fusion results
 # - Visualizations
+```
+
+### Example: Hyperparameter Tuning
+
+```bash
+# Run hyperparameter tuning for synthetic networks
+sbatch scripts/submit_simulated_data_jobs_with_tuning.sh
+
+# Run hyperparameter tuning for PPI networks
+sbatch scripts/submit_ppi_comprehensive_with_tuning.sh
+
+# Tuning results are automatically used in subsequent analysis jobs
 ```
 
 ## 📁 Project Structure
@@ -123,18 +213,31 @@ QuVINE/
 ├── examples/                # Runnable examples
 ├── notebooks/               # Jupyter notebooks for analysis
 ├── scripts/                 # Utility and batch execution scripts
+│   ├── submit_simulated_data_jobs_with_tuning.sh
+│   ├── submit_ppi_comprehensive_with_tuning.sh
+│   └── run_hyperparameter_tuning.py
 ├── src/quvine/              # Main package source code
 │   ├── analysis/            # Result analysis and comparison
 │   ├── baselines/           # Classical and hybrid baselines
+│   │   ├── gat.py           # 12 GAT variants
+│   │   ├── graphgps.py      # 12 GraphGPS variants
+│   │   └── gcn_mf.py        # Classical baselines
 │   ├── complexity/          # Graph complexity metrics
 │   ├── data/                # Graph/data preparation utilities
 │   ├── embedding/           # Embedding and quantum filters
+│   │   ├── quantum_filters.py  # 6 filter methods
+│   │   └── registry.py      # Method registry
 │   ├── evaluation/          # Downstream task evaluation
 │   ├── fusion/              # Embedding fusion methods
+│   │   └── fuse.py          # Hierarchical fusion
 │   ├── utils/               # Reusable utilities
 │   ├── views/               # Graph view generation
-│   └── walks/               # Classical and quantum walks
+│   ├── walks/               # Classical and quantum walks
+│   ├── comprehensive_embedding_analysis.py  # Main analysis
+│   └── pipeline.py          # End-to-end pipeline
 ├── tests/                   # Unit and integration tests
+├── METHOD_REGISTRY.md       # Complete method documentation
+├── IMPLEMENTATION_PLAN.md   # Development roadmap
 ├── pyproject.toml           # Package configuration
 ├── requirements.txt         # Python dependencies
 └── README.md                # This file
@@ -144,6 +247,8 @@ QuVINE/
 
 ### Quick Links
 
+- **[Method Registry](./METHOD_REGISTRY.md)** - Complete list of all 39 methods
+- **[Implementation Plan](./IMPLEMENTATION_PLAN.md)** - Development roadmap and architecture
 - **[Quick Start Guide](./docs/guides/QUICK_START.md)** - Get started in minutes
 - **[Comprehensive Analysis Guide](./docs/guides/COMPREHENSIVE_ANALYSIS_GUIDE.md)** - Full analysis workflows
 - **[Dataset Generation Guide](./docs/guides/COMPREHENSIVE_DATASET_GUIDE.md)** - Generate synthetic networks
@@ -198,21 +303,24 @@ print(f"Inverse Participation Ratio: {metrics['inverse_participation_ratio']:.3f
 
 ### 2. Embedding Methods
 
-**Quantum Methods:**
-- **CTQW**: Continuous-Time Quantum Walk
-- **DTQW**: Discrete-Time Quantum Walk
+QuVINE provides 39 methods across 5 categories:
 
-**Classical Methods:**
-- **RWR**: Random Walk with Restart
-- **Node2Vec**: Skip-gram based embeddings
-- **NetMF**: Matrix factorization approach
-- **GCN**: Graph Convolutional Networks
-- **GAT**: Graph Attention Networks
-- **GraphGPS**: Graph transformer architecture
+**Quantum Methods (16):**
+- SGNS: quvine_ctqw, quvine_dtqw
+- Filters: quvine_ctqw_heat, quvine_ctqw_poly
+- GAT: 6 quantum variants
+- GraphGPS: 6 quantum variants
+
+**Classical Methods (23):**
+- SGNS: quvine_rwr
+- Filters: 4 classical variants
+- GAT: 6 classical variants
+- GraphGPS: 6 classical variants
+- Baselines: node2vec, netmf, graphsage, appnp, baseline_filter, baseline_gcnmf
 
 ### 3. Multi-View Fusion
 
-Combine embeddings from different methods:
+Hierarchical fusion strategy combining quantum and classical perspectives:
 
 ```python
 from quvine.fusion.fuse import fuse_embeddings
@@ -225,9 +333,16 @@ embeddings_rwr = pipeline_rwr.fit_transform(G)
 # Fuse embeddings
 fused = fuse_embeddings(
     [embeddings_ctqw, embeddings_dtqw, embeddings_rwr],
-    method='concatenate'  # or 'average', 'weighted'
+    method='svd',  # or 'concatenate', 'average', 'weighted'
+    target_dim=128
 )
 ```
+
+**Fusion Strategy:**
+1. Within-type fusion (e.g., all GAT methods)
+2. Quantum vs classical fusion per type
+3. Cross-type fusion for best methods
+4. Final quantum and classical fused embeddings
 
 ### 4. Downstream Evaluation
 
@@ -249,7 +364,8 @@ from quvine.evaluation import evaluate_link_prediction
 
 results = evaluate_link_prediction(
     G, embeddings,
-    test_ratio=0.2
+    test_ratio=0.2,
+    negative_strategy='degree_matched'
 )
 ```
 
@@ -261,6 +377,28 @@ results = evaluate_node_classification(
     G, embeddings, labels,
     test_ratio=0.2
 )
+```
+
+### 5. Hyperparameter Tuning
+
+Automated hyperparameter optimization using Optuna:
+
+```python
+from quvine.comprehensive_embedding_analysis import ComprehensiveEmbeddingAnalysis
+
+analysis = ComprehensiveEmbeddingAnalysis(
+    n_networks_per_type=10,
+    n_nodes=200,
+    embedding_dim=128,
+    enable_tuning=True,
+    n_tuning_trials=50
+)
+
+# Tuning optimizes:
+# - Walk parameters (time, steps, restart probability)
+# - Filter parameters (scale, polynomial degree)
+# - Neural network hyperparameters (layers, heads, dropout)
+# - Training parameters (learning rate, epochs, batch size)
 ```
 
 ## 🧪 Examples
@@ -282,22 +420,27 @@ for key, value in metrics.items():
     print(f"{key}: {value:.4f}")
 ```
 
-### Example 2: Compare Embedding Methods
+### Example 2: Compare All 39 Methods
 
 ```python
 from quvine.comprehensive_embedding_analysis import ComprehensiveEmbeddingAnalysis
 
-# Quick comparison (10 networks, ~5-15 minutes)
+# Run comprehensive comparison
 analysis = ComprehensiveEmbeddingAnalysis(
-    n_networks_per_type=5,
-    n_nodes=100,
-    embedding_dim=64
+    n_networks_per_type=10,
+    n_nodes=200,
+    embedding_dim=128,
+    embedding_methods='all',  # All 39 methods
+    output_dir='outputs/method_comparison'
 )
 
 results = analysis.run_complete_analysis()
 
-# View recommendations
-print(results['recommendations'])
+# View method rankings
+print(results['method_rankings'])
+
+# View quantum vs classical comparison
+print(results['quantum_vs_classical'])
 ```
 
 ### Example 3: Biological Network Analysis
@@ -310,8 +453,12 @@ from quvine.evaluation import evaluate_disease_gene_ranking
 # Load protein-protein interaction network
 G = load_ppi_network('BioPlex3')
 
-# Generate embeddings
-pipeline = EmbeddingPipeline(embedding_dim=128, walk_type='ctqw')
+# Generate embeddings with quantum method
+pipeline = EmbeddingPipeline(
+    embedding_dim=128,
+    walk_type='ctqw',
+    method='gat_ctqw_heat'  # GAT + CTQW + heat filter
+)
 embeddings = pipeline.fit_transform(G)
 
 # Evaluate disease gene ranking
@@ -322,6 +469,30 @@ results = evaluate_disease_gene_ranking(
 )
 
 print(f"Precision@50: {results['precision@50']:.3f}")
+print(f"Recall@50: {results['recall@50']:.3f}")
+```
+
+### Example 4: Fusion Pipeline
+
+```python
+from quvine.comprehensive_embedding_analysis import ComprehensiveEmbeddingAnalysis
+
+# Run analysis with fusion
+analysis = ComprehensiveEmbeddingAnalysis(
+    n_networks_per_type=20,
+    n_nodes=200,
+    embedding_dim=128,
+    enable_fusion=True,
+    fusion_strategy='hierarchical'
+)
+
+results = analysis.run_complete_analysis()
+
+# Compare individual methods vs fused embeddings
+print("Best individual quantum method:", results['best_quantum_method'])
+print("Best individual classical method:", results['best_classical_method'])
+print("Fused quantum performance:", results['fused_quantum_performance'])
+print("Fused classical performance:", results['fused_classical_performance'])
 ```
 
 ## 🔧 Advanced Usage
@@ -370,14 +541,46 @@ python run_comprehensive_analysis.py --quick --n-jobs 4
 ### HPC Cluster Deployment
 
 ```bash
-# Submit batch job
-sbatch scripts/run_hpc_analysis.sh
+# Submit hyperparameter tuning jobs
+sbatch scripts/submit_simulated_data_jobs_with_tuning.sh
+
+# Submit PPI network analysis
+sbatch scripts/submit_ppi_comprehensive_with_tuning.sh
 
 # Monitor progress
 squeue -u $USER
 
 # Aggregate results
 python scripts/aggregate_results.py --input-dir outputs/hpc_runs
+```
+
+### Method Selection
+
+```python
+# Run specific methods
+analysis = ComprehensiveEmbeddingAnalysis(
+    embedding_methods=[
+        'quvine_ctqw',
+        'gat_ctqw_heat',
+        'graphgps_ctqw_poly',
+        'node2vec'
+    ]
+)
+
+# Run all quantum methods
+analysis = ComprehensiveEmbeddingAnalysis(
+    embedding_methods='quantum'
+)
+
+# Run all classical methods
+analysis = ComprehensiveEmbeddingAnalysis(
+    embedding_methods='classical'
+)
+
+# Run all methods (default)
+analysis = ComprehensiveEmbeddingAnalysis(
+    embedding_methods='all'
+)
 ```
 
 ## 📊 Results and Analysis
@@ -396,10 +599,11 @@ meta_results = run_meta_analysis(
 )
 
 # Generates:
-# - Performance delta analysis
+# - Performance delta analysis (quantum vs classical)
 # - Win/loss summaries by dataset
 # - Correlation with complexity metrics
 # - Forest plots and boxplots
+# - Method recommendations
 ```
 
 ### Visualization
@@ -410,8 +614,22 @@ from quvine.analysis import create_performance_plots
 create_performance_plots(
     results_df,
     output_dir='outputs/visualizations',
-    plot_types=['boxplot', 'forest', 'correlation']
+    plot_types=['boxplot', 'forest', 'correlation', 'heatmap']
 )
+```
+
+### Complexity-Performance Correlation
+
+```python
+from quvine.analysis import analyze_complexity_correlation
+
+correlation_results = analyze_complexity_correlation(
+    results_df,
+    complexity_metrics=['spectral_gap', 'von_neumann_entropy', 'modularity'],
+    performance_metrics=['precision@10', 'auc_roc', 'accuracy']
+)
+
+# Identifies which complexity metrics predict method performance
 ```
 
 ## 🧬 Biological Applications
@@ -469,6 +687,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](./LICE
 - Built with [NetworkX](https://networkx.org/), [NumPy](https://numpy.org/), [SciPy](https://scipy.org/)
 - Quantum walk implementations based on [HiperWalk](https://github.com/hiperwalk/hiperwalk)
 - Baseline methods from [Node2Vec](https://github.com/aditya-grover/node2vec), [NetMF](https://github.com/xptree/NetMF)
+- Graph neural networks powered by [PyTorch Geometric](https://pytorch-geometric.readthedocs.io/)
+- Hyperparameter tuning with [Optuna](https://optuna.org/)
 
 ## 📧 Contact
 
@@ -479,12 +699,16 @@ For questions, issues, or collaboration opportunities:
 
 ## 🗺️ Roadmap
 
-- [ ] Additional quantum walk variants
+- [x] 39 embedding methods (16 quantum, 23 classical)
+- [x] Hierarchical fusion strategy
+- [x] Automated hyperparameter tuning
+- [x] HPC cluster deployment
 - [ ] GPU acceleration for large-scale networks
 - [ ] Interactive visualization dashboard
 - [ ] Pre-trained embeddings for common biological networks
-- [ ] Integration with graph neural network frameworks
 - [ ] Extended biological pathway databases
+- [ ] Real-time embedding updates for dynamic networks
+- [ ] Integration with additional graph neural network frameworks
 
 ---
 

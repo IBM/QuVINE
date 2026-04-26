@@ -91,24 +91,31 @@ from quvine.evaluation.link_prediction import (
     _make_bidi,
 )
 from quvine.embedding.quantum_filters import (
-    generate_quvine_heat_embedding, 
+    generate_quvine_heat_embedding,
     generate_quvine_poly_embedding,
-    generate_baseline_filter_embedding
+    generate_baseline_filter_embedding,
+    generate_baseline_heat_embedding,
+    generate_baseline_poly_embedding,
+    generate_rwr_heat_embedding,
+    generate_rwr_poly_embedding,
 )
 
 from quvine.baselines.gat import (
     generate_gat_embedding,
+    generate_gat_embedding_by_method_name,
     GATConfig,
-    TrainConfig,
+    TrainConfig as GATTrainConfig,
 )
 try:
     from quvine.baselines.graphgps import (
         generate_graphgps_embedding,
+        generate_graphgps_embedding_by_method_name,
         GraphGPSConfig,
         TrainConfig as GraphGPSTrainConfig,
     )
 except ImportError:
     generate_graphgps_embedding = None
+    generate_graphgps_embedding_by_method_name = None
     GraphGPSConfig = None
     GraphGPSTrainConfig = None
 from quvine.embedding.registry import EmbeddingStore
@@ -1715,6 +1722,123 @@ class ComprehensiveEmbeddingAnalysis:
             embeddings, _ = generate_graphgps_embedding(**kwargs)
             return embeddings
         
+        # ========== New Filter Methods (Phase 2) ==========
+        elif method_name == 'quvine_baseline_heat':
+            hp = (method_hyperparams or {}).get('quvine_baseline_heat', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params('quvine_baseline_heat', network_type=network_id) or {}
+            return generate_baseline_heat_embedding(
+                G=G,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                scale=hp.get('scale', 1.0),
+                normalize=hp.get('normalize', True),
+                random_state=self.base_seed
+            )
+        
+        elif method_name == 'quvine_baseline_poly':
+            hp = (method_hyperparams or {}).get('quvine_baseline_poly', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params('quvine_baseline_poly', network_type=network_id) or {}
+            return generate_baseline_poly_embedding(
+                G=G,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                order=hp.get('order', 4),
+                normalize=hp.get('normalize', True),
+                random_state=self.base_seed
+            )
+        
+        elif method_name == 'quvine_rwr_heat':
+            hp = (method_hyperparams or {}).get('quvine_rwr_heat', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params('quvine_rwr_heat', network_type=network_id) or {}
+            return generate_rwr_heat_embedding(
+                G=G,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                restart_prob=hp.get('restart_prob', 0.15),
+                scale=hp.get('scale', 1.0),
+                normalize=hp.get('normalize', True),
+                random_state=self.base_seed
+            )
+        
+        elif method_name == 'quvine_rwr_poly':
+            hp = (method_hyperparams or {}).get('quvine_rwr_poly', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params('quvine_rwr_poly', network_type=network_id) or {}
+            return generate_rwr_poly_embedding(
+                G=G,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                restart_prob=hp.get('restart_prob', 0.15),
+                order=hp.get('order', 4),
+                normalize=hp.get('normalize', True),
+                random_state=self.base_seed
+            )
+        
+        # ========== GAT Methods (12 variants) ==========
+        elif method_name.startswith('gat_'):
+            if generate_gat_embedding_by_method_name is None:
+                raise ImportError("GAT methods require quvine.baselines.gat")
+            
+            # Generate quantum targets if needed
+            ctqw_targets = None
+            dtqw_targets = None
+            if 'ctqw' in method_name or 'dtqw' in method_name:
+                ctqw_targets = self._generate_quantum_targets(G, seeds)
+                dtqw_targets = ctqw_targets  # Use same targets for both
+            
+            hp = (method_hyperparams or {}).get('gat', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params(method_name, network_type=network_id) or {}
+            
+            return generate_gat_embedding_by_method_name(
+                G=G,
+                method_name=method_name,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                ctqw_targets=ctqw_targets,
+                dtqw_targets=dtqw_targets,
+                heat_t=hp.get('heat_t', 1.0),
+                poly_K=hp.get('poly_K', 4),
+                rwr_alpha=hp.get('rwr_alpha', 0.15),
+                gat_config=None,  # Will use defaults
+                train_config=None,  # Will use defaults
+            )
+        
+        # ========== GraphGPS Methods (remaining 4 variants) ==========
+        elif method_name.startswith('graphgps_') and method_name not in [
+            'graphgps_rwr', 'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
+            'graphgps_rwr_heat', 'graphgps_rwr_poly', 'graphgps_dtqw_heat', 'graphgps_dtqw_poly'
+        ]:
+            # Handle: graphgps_baseline, graphgps_heat, graphgps_poly, graphgps_ctqw, graphgps_dtqw
+            if generate_graphgps_embedding_by_method_name is None:
+                raise ImportError("GraphGPS methods require quvine.baselines.graphgps")
+            
+            # Generate quantum targets if needed
+            ctqw_targets = None
+            dtqw_targets = None
+            direct_features = None
+            if 'ctqw' in method_name or 'dtqw' in method_name:
+                ctqw_targets = self._generate_quantum_targets(G, seeds)
+                dtqw_targets = ctqw_targets
+                # For direct variants, we'd need pre-computed walk features
+                # For now, use targets for calibration
+            
+            hp = (method_hyperparams or {}).get('graphgps', {})
+            if not hp and network_id:
+                hp = self._get_method_tuned_params(method_name, network_type=network_id) or {}
+            
+            return generate_graphgps_embedding_by_method_name(
+                G=G,
+                method_name=method_name,
+                embedding_dim=hp.get('embedding_dim', self.embedding_dim),
+                ctqw_targets=ctqw_targets,
+                dtqw_targets=dtqw_targets,
+                direct_features=direct_features,
+                heat_t=hp.get('heat_t', 1.0),
+                poly_K=hp.get('poly_K', 4),
+                rwr_alpha=hp.get('rwr_alpha', 0.15),
+                gps_config=None,  # Will use defaults
+                train_config=None,  # Will use defaults
+            )
+        
         else:
             raise ValueError(f"Unknown method: {method_name}")
 
@@ -1901,6 +2025,46 @@ class ComprehensiveEmbeddingAnalysis:
                         hp['baseline_filter_poly'] = {
                             'K': trial.suggest_int('K', 2, 6),
                             'embedding_dim': self.embedding_dim,
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_baseline_heat':
+                        hp['quvine_baseline_heat'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'scale': trial.suggest_float('scale', 0.1, 5.0, log=True),
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_baseline_poly':
+                        hp['quvine_baseline_poly'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'order': trial.suggest_int('order', 2, 8),
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_rwr_heat':
+                        hp['quvine_rwr_heat'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'restart_prob': trial.suggest_float('restart_prob', 0.1, 0.3),
+                            'scale': trial.suggest_float('scale', 0.1, 5.0, log=True),
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_rwr_poly':
+                        hp['quvine_rwr_poly'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'restart_prob': trial.suggest_float('restart_prob', 0.1, 0.3),
+                            'order': trial.suggest_int('order', 2, 8),
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_ctqw_heat':
+                        hp['quvine_ctqw_heat'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'time': trial.suggest_float('time', 0.1, 5.0),
+                            'scale': trial.suggest_float('scale', 0.1, 5.0, log=True),
+                            'normalize': trial.suggest_categorical('normalize', [True, False]),
+                        }
+                    elif method_name == 'quvine_ctqw_poly':
+                        hp['quvine_ctqw_poly'] = {
+                            'embedding_dim': self.embedding_dim,
+                            'time': trial.suggest_float('time', 0.1, 5.0),
+                            'order': trial.suggest_int('order', 2, 8),
                             'normalize': trial.suggest_categorical('normalize', [True, False]),
                         }
                     elif method_name in ['baseline_gat', 'gat_ctqw_heat', 'gat_ctqw_poly', 'gat_dtqw_heat', 'gat_dtqw_poly', 'gat_rwr_heat', 'gat_rwr_poly']:
@@ -3463,16 +3627,27 @@ def run_single_network_analysis(
 
     if embedding_methods is None:
         embedding_methods = [
-            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw', 'quvine_fused-walk',
-            'quvine_heat', 'quvine_poly', 'quvine_fused-filt',
-            'quvine_hgcnmf', 'quvine_pgcnmf', 'quvine_fused-gcnmf',
-            'baseline_gat', 'gat_ctqw_heat', 'gat_ctqw_poly',
-            'baseline_graphgps', 'graphgps_rwr',
-            'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
+            # SGNS (3)
+            'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',
+            # Filters (6)
+            'quvine_baseline_heat', 'quvine_baseline_poly',
+            'quvine_rwr_heat', 'quvine_rwr_poly',
+            'quvine_ctqw_heat', 'quvine_ctqw_poly',
+            # GAT (12)
+            'gat_baseline', 'gat_heat', 'gat_poly',
+            'gat_rwr', 'gat_ctqw', 'gat_dtqw',
+            'gat_rwr_heat', 'gat_rwr_poly',
+            'gat_ctqw_heat', 'gat_ctqw_poly',
+            'gat_dtqw_heat', 'gat_dtqw_poly',
+            # GraphGPS (12)
+            'graphgps_baseline', 'graphgps_heat', 'graphgps_poly',
+            'graphgps_rwr', 'graphgps_ctqw', 'graphgps_dtqw',
             'graphgps_rwr_heat', 'graphgps_rwr_poly',
+            'graphgps_ctqw_heat', 'graphgps_ctqw_poly',
             'graphgps_dtqw_heat', 'graphgps_dtqw_poly',
-            'node2vec', 'netmf', 'baseline_filter', 'baseline_gcnmf',
-            'graphsage', 'appnp',
+            # Classical Baselines (6)
+            'node2vec', 'netmf', 'graphsage', 'appnp',
+            'baseline_filter', 'baseline_gcnmf',
         ]
 
     output_path = Path(output_dir)

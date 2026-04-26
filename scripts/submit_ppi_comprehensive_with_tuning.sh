@@ -59,7 +59,7 @@ SKIP_RANKING=false
 SKIP_CLASSIFICATION=false
 SKIP_LINK_PREDICTION=false
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
-METHODS="quvine_fused-walk,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_fused-filt,quvine_hgcnmf,quvine_pgcnmf,quvine_fused-gcnmf,netmf,node2vec,graphsage,baseline_gcnmf,baseline_filter"
+METHODS="quvine_rwr,quvine_ctqw,quvine_dtqw,quvine_baseline_heat,quvine_baseline_poly,quvine_rwr_heat,quvine_rwr_poly,quvine_ctqw_heat,quvine_ctqw_poly,gat_baseline,gat_heat,gat_poly,gat_rwr,gat_ctqw,gat_dtqw,gat_rwr_heat,gat_rwr_poly,gat_ctqw_heat,gat_ctqw_poly,gat_dtqw_heat,gat_dtqw_poly,graphgps_baseline,graphgps_heat,graphgps_poly,graphgps_rwr,graphgps_ctqw,graphgps_dtqw,graphgps_rwr_heat,graphgps_rwr_poly,graphgps_ctqw_heat,graphgps_ctqw_poly,graphgps_dtqw_heat,graphgps_dtqw_poly,node2vec,netmf,graphsage,appnp,baseline_filter,baseline_gcnmf"
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

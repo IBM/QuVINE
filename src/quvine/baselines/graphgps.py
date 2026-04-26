@@ -1183,5 +1183,131 @@ def generate_multiple_graphgps_embeddings(
         Z, meta = generate_graphgps_embedding(G, variant=variant, **kwargs)
         embeddings[variant] = Z
         metadata[variant] = meta
+
+
+# ============================================================================
+# Standardized Method Name Mapping (Phase 1.3)
+# ============================================================================
+
+def generate_graphgps_embedding_by_method_name(
+    G: nx.Graph,
+    method_name: str,
+    embedding_dim: int = 128,
+    nodelist: Optional[Sequence] = None,
+    base_features: Optional[np.ndarray] = None,
+    ctqw_targets: Optional[List[Dict]] = None,
+    dtqw_targets: Optional[List[Dict]] = None,
+    rwr_targets: Optional[List[Dict]] = None,
+    direct_features: Optional[Mapping[str, Union[np.ndarray, Mapping]]] = None,
+    heat_t: float = 1.0,
+    poly_K: int = 4,
+    rwr_alpha: float = 0.15,
+    gps_config: Optional[GraphGPSConfig] = None,
+    train_config: Optional[TrainConfig] = None,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate GraphGPS embedding using standardized method names.
+    
+    This function maps the 12 standardized GraphGPS method names to the existing
+    variant system in generate_graphgps_embedding.
+    
+    Supported methods:
+        - graphgps_baseline: Raw structural features
+        - graphgps_heat: Heat kernel filter only
+        - graphgps_poly: Polynomial filter only
+        - graphgps_rwr: RWR walk only
+        - graphgps_ctqw: CTQW walk only (direct features)
+        - graphgps_dtqw: DTQW walk only (direct features)
+        - graphgps_rwr_heat: RWR + heat filter
+        - graphgps_rwr_poly: RWR + polynomial filter
+        - graphgps_ctqw_heat: CTQW + heat filter (quantum calibrated)
+        - graphgps_ctqw_poly: CTQW + polynomial filter (quantum calibrated)
+        - graphgps_dtqw_heat: DTQW + heat filter (quantum calibrated)
+        - graphgps_dtqw_poly: DTQW + polynomial filter (quantum calibrated)
+    
+    Args:
+        G: NetworkX graph
+        method_name: Standardized method name (e.g., 'graphgps_baseline', 'graphgps_ctqw_heat')
+        embedding_dim: Output embedding dimension
+        nodelist: Ordered list of nodes
+        base_features: Pre-computed base features
+        ctqw_targets: CTQW calibration targets
+        dtqw_targets: DTQW calibration targets
+        rwr_targets: RWR calibration targets
+        direct_features: Direct walk features (for direct_ctqw/dtqw variants)
+        heat_t: Heat kernel time parameter (for fixed variants)
+        poly_K: Polynomial degree
+        rwr_alpha: RWR restart probability
+        gps_config: GraphGPS model configuration
+        train_config: Training configuration
+        **kwargs: Additional arguments
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_graphgps_embedding_by_method_name(G, 'graphgps_baseline', embedding_dim=64)
+        >>> print(emb.shape)  # (34, 64)
+    
+    Raises:
+        ValueError: If method_name is not recognized
+    """
+    # Map standardized names to internal variant names
+    method_to_variant = {
+        'graphgps_baseline': 'raw',
+        'graphgps_heat': 'heat_fixed',
+        'graphgps_poly': 'poly_fixed',
+        'graphgps_rwr': 'rwr',
+        'graphgps_ctqw': 'direct_ctqw',
+        'graphgps_dtqw': 'direct_dtqw',
+        'graphgps_rwr_heat': 'heat_qcal_rwr',
+        'graphgps_rwr_poly': 'poly_qcal_rwr',
+        'graphgps_ctqw_heat': 'heat_qcal_ctqw',
+        'graphgps_ctqw_poly': 'poly_qcal_ctqw',
+        'graphgps_dtqw_heat': 'heat_qcal_dtqw',
+        'graphgps_dtqw_poly': 'poly_qcal_dtqw',
+    }
+    
+    if method_name not in method_to_variant:
+        raise ValueError(
+            f"Unknown GraphGPS method: {method_name}. "
+            f"Expected one of: {list(method_to_variant.keys())}"
+        )
+    
+    variant = method_to_variant[method_name]
+    
+    # Set up GraphGPS config with desired output dimension
+    if gps_config is None:
+        gps_config = GraphGPSConfig(output_dim=embedding_dim)
+    else:
+        # Override output_dim if provided
+        gps_config.output_dim = embedding_dim
+    
+    # Set default train_config for unsupervised embedding generation
+    if train_config is None:
+        train_config = TrainConfig(task='link_reconstruction')
+    
+    # Call the existing generate_graphgps_embedding function
+    Z, meta = generate_graphgps_embedding(
+        G=G,
+        variant=variant,
+        nodelist=nodelist,
+        base_features=base_features,
+        embedding_dim=embedding_dim,
+        ctqw_targets=ctqw_targets,
+        dtqw_targets=dtqw_targets,
+        rwr_targets=rwr_targets,
+        direct_features=direct_features,
+        heat_t=heat_t,
+        poly_K=poly_K,
+        rwr_alpha=rwr_alpha,
+        gps_config=gps_config,
+        train_config=train_config,
+        **kwargs
+    )
+    
+    return Z
     return embeddings, metadata
 

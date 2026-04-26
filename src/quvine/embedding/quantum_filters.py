@@ -478,4 +478,336 @@ def generate_baseline_filter_embedding(
     else:
         raise ValueError(f"Unknown filter type: {filter_type}")
     
+
+
+# ============================================================================
+# New Filter Methods (Phase 1.1)
+# ============================================================================
+
+def generate_baseline_heat_embedding(
+    G: nx.Graph,
+    embedding_dim: int = 128,
+    scale: float = 1.0,
+    use_features: bool = False,
+    features: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    random_state: int = 42,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate heat kernel filter embedding without any walk (pure spectral filtering).
+    
+    This is a baseline method that applies heat kernel diffusion directly to
+    random features without quantum calibration or walk-based preprocessing.
+    
+    Args:
+        G: NetworkX graph
+        embedding_dim: Embedding dimension
+        scale: Heat kernel scale parameter (t in exp(-t*L))
+        use_features: Whether to use provided features or generate random ones
+        features: Node features [N, d] (optional)
+        normalize: Whether to normalize Laplacian
+        random_state: Random seed
+        **kwargs: Additional arguments (for compatibility)
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_baseline_heat_embedding(G, embedding_dim=64, scale=1.0)
+        >>> print(emb.shape)  # (34, 64)
+    """
+    np.random.seed(random_state)
+    N = G.number_of_nodes()
+    
+    logger.info(f"Generating baseline heat embedding (scale={scale:.4f}, dim={embedding_dim})")
+    
+    # Get Laplacian
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=normalize)
+    
+    # Generate or use features
+    if use_features and features is not None:
+        X = features
+    else:
+        rng = np.random.default_rng(random_state)
+        X = rng.normal(size=(N, embedding_dim))
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-12)
+    
+    # Apply heat kernel filter
+    Z = apply_heat_filter(L, X, scale)
+    
+    return Z
+
+
+def generate_baseline_poly_embedding(
+    G: nx.Graph,
+    embedding_dim: int = 128,
+    order: int = 4,
+    use_features: bool = False,
+    features: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    random_state: int = 42,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate polynomial filter embedding without any walk (pure spectral filtering).
+    
+    This is a baseline method that applies polynomial filter directly to
+    random features without quantum calibration or walk-based preprocessing.
+    Uses simple alternating coefficients: [1, -1, 0.5, -0.25, ...]
+    
+    Args:
+        G: NetworkX graph
+        embedding_dim: Embedding dimension
+        order: Polynomial order (degree)
+        use_features: Whether to use provided features or generate random ones
+        features: Node features [N, d] (optional)
+        normalize: Whether to normalize Laplacian
+        random_state: Random seed
+        **kwargs: Additional arguments (for compatibility)
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_baseline_poly_embedding(G, embedding_dim=64, order=4)
+        >>> print(emb.shape)  # (34, 64)
+    """
+    np.random.seed(random_state)
+    N = G.number_of_nodes()
+    
+    logger.info(f"Generating baseline polynomial embedding (order={order}, dim={embedding_dim})")
+    
+    # Get Laplacian
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=normalize)
+    
+    # Generate or use features
+    if use_features and features is not None:
+        X = features
+    else:
+        rng = np.random.default_rng(random_state)
+        X = rng.normal(size=(N, embedding_dim))
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-12)
+    
+    # Use simple polynomial coefficients (alternating signs, decreasing magnitude)
+    coeffs = np.array([(-1)**k / (2**k) for k in range(order + 1)])
+    
+    # Apply polynomial filter
+    Z = apply_polynomial_filter(L, X, coeffs)
+    
+    return Z
+
+
+def _compute_rwr_matrix(
+    G: nx.Graph,
+    restart_prob: float = 0.15,
+    max_iter: int = 100,
+    tol: float = 1e-6
+) -> np.ndarray:
+    """
+    Compute Random Walk with Restart (RWR) transition matrix.
+    
+    The RWR matrix P_rwr satisfies:
+        P_rwr = (1 - alpha) * P * P_rwr + alpha * I
+    
+    where P is the random walk transition matrix and alpha is the restart probability.
+    
+    Args:
+        G: NetworkX graph
+        restart_prob: Restart probability (alpha)
+        max_iter: Maximum number of power iterations
+        tol: Convergence tolerance
+    
+    Returns:
+        RWR matrix [N, N]
+    """
+    N = G.number_of_nodes()
+    nodelist = list(G.nodes())
+    
+    # Get adjacency matrix and degree matrix
+    A = nx.adjacency_matrix(G, nodelist=nodelist).astype(float)
+    degrees = np.array(A.sum(axis=1)).flatten()
+    
+    # Avoid division by zero
+    degrees = np.maximum(degrees, 1e-12)
+    D_inv = sp.diags(1.0 / degrees)
+    
+    # Transition matrix: P = D^{-1} A
+    P = D_inv @ A
+    
+    # Initialize RWR matrix
+    P_rwr = sp.eye(N, format='csr')
+    
+    # Power iteration: P_rwr = alpha * I + (1 - alpha) * P @ P_rwr
+    for iteration in range(max_iter):
+        P_rwr_new = restart_prob * sp.eye(N, format='csr') + (1 - restart_prob) * (P @ P_rwr)
+        
+        # Check convergence
+        diff = spla.norm(P_rwr_new - P_rwr)
+        if diff < tol:
+            logger.info(f"RWR converged in {iteration + 1} iterations (diff={diff:.2e})")
+            break
+        
+        P_rwr = P_rwr_new
+    else:
+        logger.warning(f"RWR did not converge in {max_iter} iterations")
+    
+    return P_rwr.toarray()
+
+
+def generate_rwr_heat_embedding(
+    G: nx.Graph,
+    embedding_dim: int = 128,
+    restart_prob: float = 0.15,
+    scale: float = 1.0,
+    use_features: bool = False,
+    features: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    random_state: int = 42,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate RWR walk + heat filter embedding.
+    
+    Workflow:
+    1. Compute RWR transition matrix
+    2. Use RWR matrix as features or combine with random features
+    3. Apply heat kernel filter
+    
+    Args:
+        G: NetworkX graph
+        embedding_dim: Embedding dimension
+        restart_prob: RWR restart probability (alpha)
+        scale: Heat kernel scale parameter
+        use_features: Whether to use provided features or generate random ones
+        features: Node features [N, d] (optional)
+        normalize: Whether to normalize Laplacian
+        random_state: Random seed
+        **kwargs: Additional arguments (for compatibility)
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_rwr_heat_embedding(G, embedding_dim=64, restart_prob=0.15, scale=1.0)
+        >>> print(emb.shape)  # (34, 64)
+    """
+    np.random.seed(random_state)
+    N = G.number_of_nodes()
+    
+    logger.info(f"Generating RWR+heat embedding (restart={restart_prob:.3f}, scale={scale:.4f}, dim={embedding_dim})")
+    
+    # Get Laplacian
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=normalize)
+    
+    # Compute RWR matrix
+    P_rwr = _compute_rwr_matrix(G, restart_prob=restart_prob)
+    
+    # Generate features from RWR matrix
+    if use_features and features is not None:
+        # Combine RWR with provided features
+        X = features
+    else:
+        # Use RWR matrix columns as features, then project to embedding_dim
+        if embedding_dim <= N:
+            # Use SVD to reduce dimensionality
+            U, S, Vt = np.linalg.svd(P_rwr, full_matrices=False)
+            X = U[:, :embedding_dim] @ np.diag(S[:embedding_dim])
+        else:
+            # Pad with random features
+            rng = np.random.default_rng(random_state)
+            X_random = rng.normal(size=(N, embedding_dim - N))
+            X = np.hstack([P_rwr, X_random])
+        
+        # Normalize
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-12)
+    
+    # Apply heat kernel filter
+    Z = apply_heat_filter(L, X, scale)
+    
+    return Z
+
+
+def generate_rwr_poly_embedding(
+    G: nx.Graph,
+    embedding_dim: int = 128,
+    restart_prob: float = 0.15,
+    order: int = 4,
+    use_features: bool = False,
+    features: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    random_state: int = 42,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate RWR walk + polynomial filter embedding.
+    
+    Workflow:
+    1. Compute RWR transition matrix
+    2. Use RWR matrix as features or combine with random features
+    3. Apply polynomial filter
+    
+    Args:
+        G: NetworkX graph
+        embedding_dim: Embedding dimension
+        restart_prob: RWR restart probability (alpha)
+        order: Polynomial order (degree)
+        use_features: Whether to use provided features or generate random ones
+        features: Node features [N, d] (optional)
+        normalize: Whether to normalize Laplacian
+        random_state: Random seed
+        **kwargs: Additional arguments (for compatibility)
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_rwr_poly_embedding(G, embedding_dim=64, restart_prob=0.15, order=4)
+        >>> print(emb.shape)  # (34, 64)
+    """
+    np.random.seed(random_state)
+    N = G.number_of_nodes()
+    
+    logger.info(f"Generating RWR+poly embedding (restart={restart_prob:.3f}, order={order}, dim={embedding_dim})")
+    
+    # Get Laplacian
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=normalize)
+    
+    # Compute RWR matrix
+    P_rwr = _compute_rwr_matrix(G, restart_prob=restart_prob)
+    
+    # Generate features from RWR matrix
+    if use_features and features is not None:
+        # Combine RWR with provided features
+        X = features
+    else:
+        # Use RWR matrix columns as features, then project to embedding_dim
+        if embedding_dim <= N:
+            # Use SVD to reduce dimensionality
+            U, S, Vt = np.linalg.svd(P_rwr, full_matrices=False)
+            X = U[:, :embedding_dim] @ np.diag(S[:embedding_dim])
+        else:
+            # Pad with random features
+            rng = np.random.default_rng(random_state)
+            X_random = rng.normal(size=(N, embedding_dim - N))
+            X = np.hstack([P_rwr, X_random])
+        
+        # Normalize
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-12)
+    
+    # Use simple polynomial coefficients
+    coeffs = np.array([(-1)**k / (2**k) for k in range(order + 1)])
+    
+    # Apply polynomial filter
+    Z = apply_polynomial_filter(L, X, coeffs)
+    
+    return Z
     return Z

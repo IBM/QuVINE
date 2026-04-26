@@ -1160,6 +1160,124 @@ def generate_multiple_gat_embeddings(
         Z, meta = generate_gat_embedding(G, variant=variant, **kwargs)
         embeddings[variant] = Z
         metadata[variant] = meta
+
+
+# ============================================================================
+# Standardized Method Name Mapping (Phase 1.2)
+# ============================================================================
+
+def generate_gat_embedding_by_method_name(
+    G: nx.Graph,
+    method_name: str,
+    embedding_dim: int = 128,
+    nodelist: Optional[Sequence] = None,
+    base_features: Optional[ArrayLike] = None,
+    ctqw_targets: Optional[Sequence[Mapping]] = None,
+    dtqw_targets: Optional[Sequence[Mapping]] = None,
+    rwr_targets: Optional[Sequence[Mapping]] = None,
+    heat_t: Optional[float] = None,
+    poly_K: int = 4,
+    rwr_alpha: float = 0.15,
+    gat_config: Optional[GATConfig] = None,
+    train_config: Optional[TrainConfig] = None,
+    **kwargs
+) -> np.ndarray:
+    """
+    Generate GAT embedding using standardized method names.
+    
+    This function maps the 12 standardized GAT method names to the existing
+    variant system in generate_gat_embedding.
+    
+    Supported methods:
+        - gat_baseline: Raw structural features
+        - gat_heat: Heat kernel filter only
+        - gat_poly: Polynomial filter only
+        - gat_rwr: RWR walk only
+        - gat_ctqw: CTQW walk only (direct features)
+        - gat_dtqw: DTQW walk only (direct features)
+        - gat_rwr_heat: RWR + heat filter
+        - gat_rwr_poly: RWR + polynomial filter
+        - gat_ctqw_heat: CTQW + heat filter (quantum calibrated)
+        - gat_ctqw_poly: CTQW + polynomial filter (quantum calibrated)
+        - gat_dtqw_heat: DTQW + heat filter (quantum calibrated)
+        - gat_dtqw_poly: DTQW + polynomial filter (quantum calibrated)
+    
+    Args:
+        G: NetworkX graph
+        method_name: Standardized method name (e.g., 'gat_baseline', 'gat_ctqw_heat')
+        embedding_dim: Output embedding dimension
+        nodelist: Ordered list of nodes
+        base_features: Pre-computed base features
+        ctqw_targets: CTQW calibration targets
+        dtqw_targets: DTQW calibration targets
+        rwr_targets: RWR calibration targets
+        heat_t: Heat kernel time parameter (for fixed variants)
+        poly_K: Polynomial degree
+        rwr_alpha: RWR restart probability
+        gat_config: GAT model configuration
+        train_config: Training configuration
+        **kwargs: Additional arguments
+    
+    Returns:
+        Node embeddings [N, embedding_dim]
+    
+    Example:
+        >>> G = nx.karate_club_graph()
+        >>> emb = generate_gat_embedding_by_method_name(G, 'gat_baseline', embedding_dim=64)
+        >>> print(emb.shape)  # (34, 64)
+    
+    Raises:
+        ValueError: If method_name is not recognized
+    """
+    # Map standardized names to internal variant names
+    method_to_variant = {
+        'gat_baseline': 'raw',
+        'gat_heat': 'heat_fixed',
+        'gat_poly': 'poly_fixed',
+        'gat_rwr': 'rwr',
+        'gat_ctqw': 'direct_ctqw',
+        'gat_dtqw': 'direct_dtqw',
+        'gat_rwr_heat': 'heat_qcal_rwr',
+        'gat_rwr_poly': 'poly_qcal_rwr',
+        'gat_ctqw_heat': 'heat_qcal_ctqw',
+        'gat_ctqw_poly': 'poly_qcal_ctqw',
+        'gat_dtqw_heat': 'heat_qcal_dtqw',
+        'gat_dtqw_poly': 'poly_qcal_dtqw',
+    }
+    
+    if method_name not in method_to_variant:
+        raise ValueError(
+            f"Unknown GAT method: {method_name}. "
+            f"Expected one of: {list(method_to_variant.keys())}"
+        )
+    
+    variant = method_to_variant[method_name]
+    
+    # Set up GAT config with desired output dimension
+    if gat_config is None:
+        gat_config = GATConfig(output_dim=embedding_dim)
+    else:
+        # Override output_dim if provided
+        gat_config.output_dim = embedding_dim
+    
+    # Call the existing generate_gat_embedding function
+    Z, meta = generate_gat_embedding(
+        G=G,
+        variant=variant,
+        nodelist=nodelist,
+        base_features=base_features,
+        ctqw_targets=ctqw_targets,
+        dtqw_targets=dtqw_targets,
+        rwr_targets=rwr_targets,
+        heat_t=heat_t,
+        poly_K=poly_K,
+        rwr_alpha=rwr_alpha,
+        gat_config=gat_config,
+        train_config=train_config,
+        **kwargs
+    )
+    
+    return Z
     return embeddings, metadata
 
 
