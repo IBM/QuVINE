@@ -192,4 +192,3 @@ if __name__ == '__main__':
         for col in sorted(df.columns):
             print(f"  - {col}")
 
-# Made with Bob

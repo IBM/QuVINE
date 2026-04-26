@@ -108,4 +108,3 @@ if __name__ == '__main__':
     notebook_path = 'delta_analysis.ipynb'
     fix_forest_plot(notebook_path)
 
-# Made with Bob

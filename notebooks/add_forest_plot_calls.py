@@ -66,4 +66,3 @@ if __name__ == '__main__':
     notebook_path = 'delta_analysis.ipynb'
     add_forest_plot_calls(notebook_path)
 
-# Made with Bob

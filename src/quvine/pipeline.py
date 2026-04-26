@@ -1,14 +1,17 @@
-from __future__ import annotations 
+from __future__ import annotations
 
+import json
 import logging
 import os
-from pathlib import Path 
-from typing import Dict, List 
-import json
-from omegaconf import OmegaConf,DictConfig
-from hydra.core.hydra_config import HydraConfig
-import pandas as pd 
+from pathlib import Path
+from typing import Dict, List
+
+import networkx as nx
+import numpy as np
+import pandas as pd
 import time
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
 from quvine.data.data_loader import load_graph, load_gwas_data
 from quvine.data.prepare import PrepareGraphConfig, prepare_graph
 from quvine.views.generator import ViewBuilder
@@ -875,24 +878,24 @@ class Pipeline:
             ]
             scores_by_method = {}
             for name, Z in store.items():
-                if self.cfg.eval.centroid:
+                if self.cfg.evaluation.centroid:
                     scores_by_method[f"{name}_centroid"] = seed_centroid_scores(
                         Z, seed_indices
                     )
-                if self.cfg.eval.max_seed:
+                if self.cfg.evaluation.max_seed:
                     scores_by_method[f"{name}_max"] = max_seed_cosine_scores(
                         Z, seed_indices
                     )
-            
+
             ranking_df = evaluate_embeddings_ranking(
                 scores_by_method=scores_by_method,
                 subgraph=graph_data,
                 seeds=source,
                 targets=target,
                 nodes=graph_data.nodes,
-                k_values=self.cfg.eval.k_values,
-                n_repeats=self.cfg.eval.n_repeats,
-                deg_tol=self.cfg.eval.deg_tol,
+                k_values=self.cfg.evaluation.k_values,
+                n_repeats=self.cfg.evaluation.n_repeats,
+                deg_tol=self.cfg.evaluation.deg_tol,
                 iteration=it,
             )
             # standard metadata for analysis 
@@ -1181,31 +1184,23 @@ class Pipeline:
 
         self.log.info("Saving embeddings to %s", emb_dir)
 
+        comparison_df = self._post_process_comparison(all_results=all_results)
+        comparison_df.to_csv(os.path.join(emb_dir, "embedding_comparison.csv"), index=False)
+
         for res in all_results:
             iter_num = res["iteration"]
-            
-            # Build dictionary for np.savez
-            npz_payload = {}
 
-            for emb_name, emb in res["embeddings"].items():
-                if emb is None:
-                    continue
-                npz_payload[emb_name] = emb.astype(np.float32, copy=False)
-
-            # Always store node ordering for alignment downstream
+            npz_payload = {
+                emb_name: emb.astype(np.float32, copy=False)
+                for emb_name, emb in res["embeddings"].items()
+                if emb is not None
+            }
             npz_payload["nodes"] = np.asarray(res["nodes"])
 
-            ofname = os.path.join(
-                emb_dir, f"embeddings_iter_{iter_num}.npz"
+            np.savez_compressed(
+                os.path.join(emb_dir, f"embeddings_iter_{iter_num}.npz"),
+                **npz_payload,
             )
-
-            np.savez_compressed(ofname, **npz_payload)
-            
-            comparison_df = self._post_process_comparison(all_results=all_results)
-            comp_ofname = "embedding_comparison_iter"+str(iter_num)+'.csv'
-            comparison_path = os.path.join(emb_dir, comp_ofname)
-            comparison_df.to_csv(comparison_path, index=False)
-            
 
             self.log.debug(
                 "Saved iteration %d embeddings: %s",

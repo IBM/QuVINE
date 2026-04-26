@@ -298,4 +298,3 @@ if [ "$DRY_RUN" = false ] && [ ${#ANALYSIS_JOB_IDS[@]} -gt 0 ]; then
 fi
 echo "============================================================"
 
-# Made with Bob

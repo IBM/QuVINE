@@ -502,4 +502,3 @@ echo " Output        : $OUTPUT_DIR/results/"
 echo " Monitor with  : bjobs -u \$USER"
 echo "============================================================"
 
-# Made with Bob

@@ -291,14 +291,16 @@ def generate_homophily_labels(
         # Generate random features with graph structure influence
         F = 32
         X_base = np.random.randn(N, F)
-        
-        # Add graph-structure-aware features (smooth over graph)
-        X_smooth = np.zeros_like(X_base)
-        A_norm_np = (A + sp.eye(N)) / (np.array(A.sum(axis=1)).flatten()[:, None] + 1)
-        for f in range(F):
-            # Smooth features over 2 hops
-            X_smooth[:, f] = A_norm_np @ (A_norm_np @ X_base[:, f])
-        
+
+        # Degree-normalised adjacency stays sparse: avoids O(N^2) dense broadcast.
+        A_tilde = A + sp.eye(N, format='csr')
+        deg = np.array(A_tilde.sum(axis=1)).flatten()
+        D_inv = sp.diags(1.0 / (deg + 1e-8), format='csr')
+        A_norm = D_inv @ A_tilde  # sparse CSR, O(E) storage
+
+        # Two-hop smoothing as two sparse matrix multiplies over all F columns at once.
+        X_smooth = A_norm @ (A_norm @ X_base)
+
         # Mix base and smooth features with noise
         X = 0.4 * X_base + 0.4 * X_smooth + 0.2 * np.random.randn(N, F)
         X = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-8)  # Normalize

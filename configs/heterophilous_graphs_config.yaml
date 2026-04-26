@@ -79,4 +79,3 @@ lsf:
   aggregation_memory_gb: 16
   python_env: /u/futro/envs/py311/bin/activate
 
-# Made with Bob

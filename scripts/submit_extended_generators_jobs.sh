@@ -323,4 +323,3 @@ echo " Visualisations: $OUTPUT_DIR/visualizations/"
 echo " Monitor with  : bjobs -u \$USER"
 echo "============================================================"
 
-# Made with Bob

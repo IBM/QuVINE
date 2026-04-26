@@ -222,26 +222,16 @@ def _layer_norm(Z, eps=1e-8):
     return (Z - mean) / (std + eps)
 
 
-def _simple_mlp_gate(features, output_dim):
-    """
-    Simple MLP-based gating mechanism using numpy.
-    
-    Uses a single hidden layer with sigmoid activation.
-    This is a simplified version; for production, consider using PyTorch.
-    """
+def _simple_mlp_gate(features, output_dim, random_state=0):
     n, input_dim = features.shape
     hidden_dim = max(64, output_dim)
-    
-    W1 = np.random.randn(input_dim, hidden_dim) * 0.01
+    rng = np.random.default_rng(random_state)
+    W1 = rng.standard_normal((input_dim, hidden_dim)) * 0.01
     b1 = np.zeros(hidden_dim)
-    W2 = np.random.randn(hidden_dim, output_dim) * 0.01
+    W2 = rng.standard_normal((hidden_dim, output_dim)) * 0.01
     b2 = np.zeros(output_dim)
-    
-    # Forward pass
-    h = np.maximum(0, features @ W1 + b1)  # ReLU activation
-    gate = 1 / (1 + np.exp(-(h @ W2 + b2)))  # Sigmoid activation
-    
-    return gate
+    h = np.maximum(0, features @ W1 + b1)
+    return 1.0 / (1.0 + np.exp(-(h @ W2 + b2)))
 
 
 def fuse_embeddings(store, k=None, L=None, method="svd",
@@ -286,9 +276,9 @@ def fuse_embeddings(store, k=None, L=None, method="svd",
     names = store.names()
     Zs_raw = [store.get(name) for name in names]
 
-    # Normalize and standardize
-    Zs = [_prep_blocks([normalize(Z)])[0] for Z in Zs_raw]
-    Zs = _prep_blocks(Zs, do_row_norm=True, do_block_standardize=True)
+    # Column-normalize then row-normalize each view once.
+    Zs = [normalize(Z) for Z in Zs_raw]
+    Zs = _prep_blocks(Zs, do_row_norm=True, do_block_standardize=False)
 
     if k is None:
         k = min(Z.shape[1] for Z in Zs)

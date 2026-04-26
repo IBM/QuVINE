@@ -1,4 +1,9 @@
-# FUSION BUG FIXES - Add to fuse.py
+import numpy as np
+from numpy.linalg import svd
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
+from typing import List, Optional
+
 
 def fuse_embeddings_attention_fixed(Zs, k, temperature=1.0, mode="effective_rank"):
     """
@@ -90,11 +95,6 @@ def fuse_embeddings_consensus_gated(Zs, k):
     if k_eff < k:
         Z_fused = np.pad(Z_fused, ((0, 0), (0, k - k_eff)), mode="constant")
     return Z_fused, W
-
-# PATCH 3 & 4: Vectorized Calibration Functions
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
-from typing import List, Optional
 
 def calibrate_heat_kernel_fast(
     L,

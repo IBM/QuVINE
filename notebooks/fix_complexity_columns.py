@@ -86,4 +86,3 @@ if __name__ == '__main__':
     notebook_path = 'delta_analysis.ipynb'
     fix_complexity_columns(notebook_path)
 
-# Made with Bob

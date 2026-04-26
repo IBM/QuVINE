@@ -34,6 +34,9 @@ class SeedTargetEvaluator:
         self.seeds = set(seeds) & set(self.nodes)
         self.targets = set(targets) & set(self.nodes)
 
+        if not self.seeds:
+            raise ValueError("SeedTargetEvaluator requires at least one seed node in the subgraph.")
+
         self.seed_indices = {self.node2i[v] for v in self.seeds}
         self.target_indices = {self.node2i[v] for v in self.targets}
 
@@ -50,13 +53,9 @@ class SeedTargetEvaluator:
     # ---------------------------
 
     def _compute_min_distance_to_seeds(self):
-        dist = {}
-        for v in self.nodes:
-            dist[v] = min(
-                nx.shortest_path_length(self.subgraph, v, s)
-                for s in self.seeds
-            )
-        return dist
+        # Single O(V+E) multi-source BFS instead of O(|seeds|*(V+E)) individual calls.
+        lengths = nx.multi_source_dijkstra_path_length(self.subgraph, self.seeds)
+        return {v: lengths.get(v, float("inf")) for v in self.nodes}
 
     def _rank_indices(self, scores):
         return sorted(

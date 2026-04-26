@@ -301,11 +301,13 @@ def _apply_edge_method(U: np.ndarray, V: np.ndarray, method: str) -> np.ndarray:
         return np.abs(U - V)
     elif method == 'l2':
         return (U - V) ** 2
-    elif method == 'inner_product':
+    elif method in ('inner_product', 'dot'):
         return (U * V).sum(axis=1, keepdims=True)
     elif method == 'cosine':
         norms = np.linalg.norm(U, axis=1, keepdims=True) * np.linalg.norm(V, axis=1, keepdims=True)
         return np.where(norms > 0, (U * V).sum(axis=1, keepdims=True) / norms, 0.0)
+    elif method == 'concat':
+        return np.concatenate([U, V], axis=1)
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -402,31 +404,37 @@ def evaluate_link_prediction(
     Returns:
         Dictionary of evaluation metrics
     """
-    pos_features = compute_edge_features(embeddings, node_list, positive_edges, edge_feature_method)
-    neg_features = compute_edge_features(embeddings, node_list, negative_edges, edge_feature_method)
+    node_to_idx = {node: idx for idx, node in enumerate(node_list)}
+    U_pos, V_pos = _extract_edge_endpoints(embeddings, node_list, positive_edges, node_to_idx)
+    U_neg, V_neg = _extract_edge_endpoints(embeddings, node_list, negative_edges, node_to_idx)
 
-    if len(pos_features) == 0 or len(neg_features) == 0:
+    if len(U_pos) == 0 or len(U_neg) == 0:
         warnings.warn("No valid edge features computed. Skipping evaluation.")
         return {'error': 'no_valid_features', 'auc_roc': 0.0, 'auc_pr': 0.0,
                 'f1': 0.0, 'n_positive': 0, 'n_negative': 0}
 
+    pos_features = _apply_edge_method(U_pos, V_pos, edge_feature_method)
+    neg_features = _apply_edge_method(U_neg, V_neg, edge_feature_method)
     X_test_all = np.vstack([pos_features, neg_features])
     y_test_all = np.repeat([1, 0], [len(pos_features), len(neg_features)])
 
+    # Pre-initialize to avoid unbound-variable hazard when have_train is False.
+    U_tp = V_tp = U_tn = V_tn = None
+
     if train_positive_edges is not None and train_negative_edges is not None:
-        train_pos_feat = compute_edge_features(embeddings, node_list, train_positive_edges, edge_feature_method)
-        train_neg_feat = compute_edge_features(embeddings, node_list, train_negative_edges, edge_feature_method)
-        if len(train_pos_feat) > 0 and len(train_neg_feat) > 0:
-            X_train = np.vstack([train_pos_feat, train_neg_feat])
-            y_train = np.repeat([1, 0], [len(train_pos_feat), len(train_neg_feat)])
-            X_test, y_test = X_test_all, y_test_all
-        else:
-            warnings.warn("Train edge features empty; falling back to internal split.")
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_test_all, y_test_all, test_size=test_size,
-                random_state=random_state, stratify=y_test_all,
-            )
+        U_tp, V_tp = _extract_edge_endpoints(embeddings, node_list, train_positive_edges, node_to_idx)
+        U_tn, V_tn = _extract_edge_endpoints(embeddings, node_list, train_negative_edges, node_to_idx)
+
+    if U_tp is not None and len(U_tp) > 0 and U_tn is not None and len(U_tn) > 0:
+        X_train = np.vstack([
+            _apply_edge_method(U_tp, V_tp, edge_feature_method),
+            _apply_edge_method(U_tn, V_tn, edge_feature_method),
+        ])
+        y_train = np.repeat([1, 0], [len(U_tp), len(U_tn)])
+        X_test, y_test = X_test_all, y_test_all
     else:
+        if train_positive_edges is not None or train_negative_edges is not None:
+            warnings.warn("Train edge features empty; falling back to internal split.")
         X_train, X_test, y_train, y_test = train_test_split(
             X_test_all, y_test_all, test_size=test_size,
             random_state=random_state, stratify=y_test_all,

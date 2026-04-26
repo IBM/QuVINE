@@ -17,4 +17,3 @@ else:
     print("First few rows:")
     print(df[['network_id', 'betti_0', 'betti_1', 'betti_2']].head())
 
-# Made with Bob

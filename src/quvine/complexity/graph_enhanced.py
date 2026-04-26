@@ -1034,4 +1034,3 @@ def compute_complexity_table(
     df = pd.DataFrame(rows).set_index("graph_name")
     return df
 
-# Made with Bob

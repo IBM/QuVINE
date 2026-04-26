@@ -1185,4 +1185,3 @@ def generate_multiple_graphgps_embeddings(
         metadata[variant] = meta
     return embeddings, metadata
 
-# Made with Bob

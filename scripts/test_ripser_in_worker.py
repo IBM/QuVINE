@@ -22,4 +22,3 @@ results = Parallel(n_jobs=2, backend="loky")(
 for i, result in enumerate(results):
     print(f"  Worker {i}: {result}")
 
-# Made with Bob

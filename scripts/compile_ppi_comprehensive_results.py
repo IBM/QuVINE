@@ -169,4 +169,3 @@ if __name__ == '__main__':
     print(f"\nBy disease:")
     print(df['disease'].value_counts().sort_index())
 
-# Made with Bob

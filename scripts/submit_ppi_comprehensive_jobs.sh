@@ -460,4 +460,3 @@ echo ""
 echo "Monitor with: bjobs -w"
 echo "======================================================"
 
-# Made with Bob
