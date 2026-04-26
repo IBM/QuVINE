@@ -46,7 +46,7 @@ set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 QUEUE="normal"
-WALLTIME="48:00"
+WALLTIME="120:00"
 TUNE_WALLTIME="72:00"
 MEMORY="16"
 MAX_NODES="4000"
