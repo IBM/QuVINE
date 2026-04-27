@@ -57,6 +57,12 @@ for _p in [str(_SRC_DIR), str(_REPO_ROOT)]:
 from quvine.data.random_graphs import (
     generate_erdos_renyi,
     generate_modular_network,
+    generate_barabasi_albert,
+    generate_watts_strogatz,
+    generate_powerlaw_cluster,
+    generate_stochastic_block_model,
+    generate_random_geometric,
+    generate_core_periphery,
 )
 from quvine.views.generator import ViewBuilder
 from quvine.corpus.builder import CorpusBuilder
@@ -142,7 +148,8 @@ def generate_pilot_graph(network_type: str, config: Dict[str, Any], seed: int = 
     if network_type == "erdos_renyi":
         p = graph_config['erdos_renyi']['p']
         G = generate_erdos_renyi(n_nodes, p=p, seed=seed)
-    elif network_type == "modular":
+    
+    elif network_type == "modular" or network_type == "modular_strong":
         mod_config = graph_config['modular']
         G, _ = generate_modular_network(
             num_communities=mod_config['n_communities'],
@@ -151,6 +158,60 @@ def generate_pilot_graph(network_type: str, config: Dict[str, Any], seed: int = 
             p_inter=mod_config['p_out'],
             seed=seed,
         )
+    
+    elif network_type == "modular_medium":
+        G, _ = generate_modular_network(
+            num_communities=4,
+            nodes_per_community=n_nodes // 4,
+            p_intra=0.35,
+            p_inter=0.04,
+            seed=seed,
+        )
+    
+    elif network_type == "modular_many_communities":
+        G, _ = generate_modular_network(
+            num_communities=8,
+            nodes_per_community=n_nodes // 8,
+            p_intra=0.4,
+            p_inter=0.02,
+            seed=seed,
+        )
+    
+    elif network_type == "watts_strogatz_high_p":
+        G = generate_watts_strogatz(n_nodes, k=6, p=0.5, seed=seed)
+    
+    elif network_type == "watts_strogatz_low_p":
+        G = generate_watts_strogatz(n_nodes, k=6, p=0.05, seed=seed)
+    
+    elif network_type == "random_geometric":
+        G = generate_random_geometric(n_nodes, radius=0.18, seed=seed)
+    
+    elif network_type == "core_periphery":
+        G, _, _ = generate_core_periphery(
+            n_core=n_nodes // 5,
+            n_periphery=n_nodes - n_nodes // 5,
+            p_core=0.7,
+            p_core_periphery=0.15,
+            p_periphery=0.01,
+            seed=seed,
+        )
+    
+    elif network_type == "scale_free":
+        G = generate_barabasi_albert(n_nodes, m=3, seed=seed)
+    
+    elif network_type == "powerlaw_cluster":
+        G = generate_powerlaw_cluster(n_nodes, m=3, p=0.3, seed=seed)
+    
+    elif network_type == "stochastic_block_model":
+        G = generate_stochastic_block_model(
+            sizes=[n_nodes // 4] * 4,
+            p_matrix=[[0.5, 0.05, 0.05, 0.05],
+                     [0.05, 0.5, 0.05, 0.05],
+                     [0.05, 0.05, 0.5, 0.05],
+                     [0.05, 0.05, 0.05, 0.5]],
+            seed=seed,
+        )
+    
     else:
         raise ValueError(f"Unknown network type: {network_type}")
     

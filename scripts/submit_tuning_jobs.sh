@@ -70,7 +70,20 @@ METHODS=(
 )
 
 # Network types to tune on (default, can be overridden with --networks)
-NETWORK_TYPES=("erdos_renyi" "modular")
+# All available network types from random_graphs.py
+NETWORK_TYPES=(
+    "erdos_renyi"
+    "watts_strogatz_high_p"
+    "watts_strogatz_low_p"
+    "random_geometric"
+    "modular_strong"
+    "modular_medium"
+    "modular_many_communities"
+    "core_periphery"
+    "scale_free"
+    "powerlaw_cluster"
+    "stochastic_block_model"
+)
 
 # ---------------------------------------------------------------------------
 # Argument parsing

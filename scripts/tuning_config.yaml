@@ -178,7 +178,20 @@ optuna:
 # ============================================================================
 experiment:
   n_graphs: 10  # Number of graphs to average over
-  network_types: ["erdos_renyi", "modular"]  # Networks to test
+  # All available network types from random_graphs.py
+  network_types: [
+    "erdos_renyi",
+    "watts_strogatz_high_p",
+    "watts_strogatz_low_p",
+    "random_geometric",
+    "modular_strong",
+    "modular_medium",
+    "modular_many_communities",
+    "core_periphery",
+    "scale_free",
+    "powerlaw_cluster",
+    "stochastic_block_model"
+  ]
   output_dir: "tuning_by_task"
   log_level: "INFO"
   save_study: true  # Save Optuna study object
