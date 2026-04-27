@@ -23,6 +23,39 @@ from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
+# Import PyTorch utilities for better error handling
+try:
+    from ..utils.torch_utils import (
+        check_torch_available,
+        require_torch,
+        TorchNotAvailableError,
+        get_device
+    )
+    TORCH_UTILS_AVAILABLE = True
+except ImportError:
+    TORCH_UTILS_AVAILABLE = False
+    
+    # Fallback implementations
+    def check_torch_available():
+        try:
+            import torch
+            return True
+        except ImportError:
+            return False
+    
+    def require_torch(func):
+        def wrapper(*args, **kwargs):
+            if not check_torch_available():
+                raise ImportError(
+                    "PyTorch is required for APPNP. Install with: pip install torch\n"
+                    "See: https://pytorch.org/get-started/locally/"
+                )
+            return func(*args, **kwargs)
+        return wrapper
+    
+    class TorchNotAvailableError(ImportError):
+        pass
+
 try:
     import torch
     import torch.nn as nn
@@ -208,9 +241,17 @@ def generate_appnp_embedding(
     
     Returns:
         Node embeddings [N, embedding_dim]
+    
+    Raises:
+        ImportError: If PyTorch is not installed
     """
     if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch is required for APPNP. Install with: pip install torch")
+        raise TorchNotAvailableError(
+            "PyTorch is required for APPNP embedding generation.\n"
+            "Install PyTorch with: pip install torch\n"
+            "See installation guide: https://pytorch.org/get-started/locally/\n"
+            "For CPU-only: pip install torch --index-url https://download.pytorch.org/whl/cpu"
+        )
     
     # Set random seeds
     np.random.seed(random_state)

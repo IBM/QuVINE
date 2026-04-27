@@ -343,8 +343,10 @@ def run_complexity_pipeline_on_random_graphs(
                 )
                 if 'Manifold Complexity' in qbc_metrics:
                     metrics['qbc_manifold_complexity'] = qbc_metrics['Manifold Complexity']
-            except:
-                pass
+            except (ImportError, ValueError, KeyError) as e:
+                print(f"  QBC manifold complexity computation skipped: {e}")
+            except Exception as e:
+                print(f"  Warning: QBC manifold complexity computation failed: {e}")
         
         results.append(metrics)
         

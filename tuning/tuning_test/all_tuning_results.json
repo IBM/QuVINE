@@ -1,0 +1,12 @@
+{
+  "erdos_renyi": {
+    "baseline_filter_heat": {
+      "best_params": {
+        "embedding_dim": 64,
+        "filter_t": 4.366700969465624,
+        "filter_order": 4
+      },
+      "best_score": 0.0
+    }
+  }
+}

@@ -1,0 +1,222 @@
+# Hyperparameter Tuning Configuration
+# This file defines the search space for each method and fixed evaluation parameters
+
+# ============================================================================
+# FIXED PARAMETERS (Graph Generation & Evaluation)
+# ============================================================================
+fixed_params:
+  # Graph generation
+  graph:
+    n_nodes: 200  # Number of nodes in synthetic graphs
+    erdos_renyi:
+      p: 0.1  # Edge probability
+    modular:
+      n_communities: 4
+      p_in: 0.3  # Intra-community edge probability
+      p_out: 0.05  # Inter-community edge probability
+  
+  # Evaluation settings
+  evaluation:
+    node_classification:
+      test_size: 0.3  # 70/30 train/test split
+      n_label_strategies: 5  # Number of label generation strategies
+      metric: "f1_macro"
+    
+    link_prediction:
+      test_ratio: 0.2  # Hold out 20% of edges
+      edge_feature_method: "hadamard"  # hadamard, average, l1, l2, concat, dot, cosine
+      metric: "auc_roc"
+    
+    node_ranking:
+      k_hops: 2  # K-hop neighbors as targets
+      top_k: 50  # Top-K nodes to consider for ranking
+      metric: "f1"  # F1 score (precision + recall)
+  
+  # Training settings
+  training:
+    random_seed: 42
+    device: "cpu"  # or "cuda" for GPU
+
+# ============================================================================
+# HYPERPARAMETER SEARCH SPACES (Per Method)
+# ============================================================================
+hyperparameters:
+  
+  # --------------------------------------------------------------------------
+  # Quantum Methods
+  # --------------------------------------------------------------------------
+  quvine_walks:
+    embedding_dim: [32, 64, 128, 256]
+    num_views: [ 3, 4, 5, 6]  # Number of graph views to generate
+    walk_length: [10, 20, 40, 60]
+    num_walks: [10, 20, 40, 80]
+    window_size: [5, 10, 15, 20]
+    negative_samples: [1, 5, 10, 20]
+    epochs: [10, 20, 50]
+    restart_prob: [0.1, 0.15, 0.2, 0.3]  # Random walk restart probability
+    max_degree: [30, 50, 100]  # Max degree for view construction
+    degree_alpha: [0.3, 0.5, 0.7]  # Degree normalization parameter
+  
+  # --------------------------------------------------------------------------
+  # Filter-based Baselines
+  # --------------------------------------------------------------------------
+  baseline_filter_heat:
+    embedding_dim: [32, 64, 128, 256]
+    tau: [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]  # Heat kernel time parameter
+    filter_order: [2, 3, 4, 5, 6, 8, 10]
+  
+  baseline_filter_poly:
+    embedding_dim: [32, 64, 128, 256]
+    filter_order: [2, 3, 4, 5, 6, 8, 10, 15, 20]
+    alpha: [0.1, 0.3, 0.5, 0.7, 0.9]  # Polynomial coefficient
+  
+  baseline_gcnmf:
+    embedding_dim: [32, 64, 128, 256]
+    n_layers: [2, 3, 4, 5]
+    window_size: [5, 10, 15, 20]
+    negative_samples: [1, 5, 10, 20]
+    learning_rate: [0.001, 0.005, 0.01, 0.05]
+    epochs: [50, 100, 200]
+  
+  # --------------------------------------------------------------------------
+  # Random Walk Methods
+  # --------------------------------------------------------------------------
+  node2vec:
+    embedding_dim: [32, 64, 128, 256]
+    walk_length: [10, 20, 40, 80]
+    num_walks: [10, 20, 40, 80]
+    p: [0.25, 0.5, 1.0, 2.0, 4.0]  # Return parameter
+    q: [0.25, 0.5, 1.0, 2.0, 4.0]  # In-out parameter
+    window_size: [5, 10, 15, 20]
+    negative_samples: [1, 5, 10, 20]
+    epochs: [5, 10, 20]
+  
+  netmf:
+    embedding_dim: [32, 64, 128, 256]
+    window_size: [5, 10, 15, 20]
+    rank: [64, 128, 256, 512]  # Matrix rank
+    negative_samples: [1, 5, 10, 20]
+  
+  # --------------------------------------------------------------------------
+  # GNN Methods
+  # --------------------------------------------------------------------------
+  graphsage:
+    embedding_dim: [32, 64, 128, 256]
+    n_layers: [2, 3, 4]
+    hidden_dim: [64, 128, 256, 512]
+    aggregator: ["mean", "gcn", "pool", "lstm"]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    epochs: [50, 100, 200]
+    batch_size: [32, 64, 128]
+  
+  appnp:
+    embedding_dim: [32, 64, 128, 256]
+    hidden_dim: [64, 128, 256, 512]
+    n_layers: [2, 3, 4]
+    alpha: [0.05, 0.1, 0.15, 0.2]  # Teleport probability
+    k_hops: [5, 10, 15, 20]  # Propagation steps
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    epochs: [50, 100, 200]
+  
+  gat_baseline:
+    embedding_dim: [32, 64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    n_layers: [2, 3, 4]
+    n_heads: [1, 2, 4, 8]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    attn_dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    epochs: [50, 100, 200]
+    negative_slope: [0.1, 0.2, 0.3]  # LeakyReLU slope
+  
+  graphgps_baseline:
+    embedding_dim: [32, 64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    n_layers: [2, 3, 4, 6]
+    n_heads: [1, 2, 4, 8]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    attn_dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    epochs: [50, 100, 200]
+    mpnn_type: ["gine", "gcn", "gin"]  # Message passing type
+    global_model_type: ["Transformer", "Performer"]
+
+# ============================================================================
+# OPTUNA SETTINGS
+# ============================================================================
+optuna:
+  # Adaptive n_trials based on method complexity
+  # Formula: base_trials × complexity_multiplier
+  adaptive_trials: true  # Enable adaptive trial count
+  base_trials: 50  # Base number of trials (used if adaptive=false)
+  n_startup_trials: 10  # Random trials before TPE (20% of base)
+  sampler: "TPE"  # Tree-structured Parzen Estimator
+  pruner: "MedianPruner"  # Prune unpromising trials
+  pruner_params:
+    n_startup_trials: 5
+    n_warmup_steps: 10
+    interval_steps: 1
+  
+  # Method-specific trial multipliers (based on parameter complexity)
+  # Calculated as: num_params × avg_choices_per_param × complexity_factor
+  method_trials:
+    quvine_walks: 100        # 10 params × ~5 choices × high complexity
+    baseline_filter_heat: 30  # 3 params × ~6 choices × simple
+    baseline_filter_poly: 40  # 3 params × ~8 choices × simple
+    baseline_gcnmf: 60       # 6 params × ~5 choices × medium
+    node2vec: 80             # 8 params × ~5 choices × medium
+    netmf: 40                # 4 params × ~5 choices × simple
+    graphsage: 80            # 8 params × ~5 choices × medium
+    appnp: 80                # 8 params × ~5 choices × medium
+    gat_baseline: 100        # 9 params × ~5 choices × high complexity
+    graphgps_baseline: 120   # 10 params × ~5 choices × high complexity
+
+# ============================================================================
+# EXPERIMENT SETTINGS
+# ============================================================================
+experiment:
+  n_graphs: 10  # Number of graphs to average over
+  network_types: ["erdos_renyi", "modular"]  # Networks to test
+  output_dir: "tuning_by_task"
+  log_level: "INFO"
+  save_study: true  # Save Optuna study object
+  parallel_jobs: 1  # Number of parallel jobs (1 = sequential)
+
+# ============================================================================
+# METHOD SELECTION
+# ============================================================================
+methods:
+  quantum:
+    - quvine_walks
+  
+  classical_filters:
+    - baseline_filter_heat
+    - baseline_filter_poly
+    - baseline_gcnmf
+  
+  random_walks:
+    - node2vec
+    - netmf
+  
+  gnns:
+    - graphsage
+    - appnp
+    - gat_baseline
+    - graphgps_baseline
+  
+  # Shorthand for all methods
+  all:
+    - quvine_walks
+    - baseline_filter_heat
+    - baseline_filter_poly
+    - baseline_gcnmf
+    - node2vec
+    - netmf
+    - graphsage
+    - appnp
+    - gat_baseline
+    - graphgps_baseline
+
+# Made with Bob

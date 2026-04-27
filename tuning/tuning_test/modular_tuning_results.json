@@ -1,0 +1,21 @@
+{
+  "node2vec": {
+    "best_params": {
+      "dimensions": 256,
+      "walk_length": 79,
+      "num_walks": 10,
+      "p": 0.542506175575077,
+      "q": 1.7427953893722627,
+      "window": 11
+    },
+    "best_score": 0.4502687958635943
+  },
+  "netmf": {
+    "best_params": {
+      "embedding_dim": 256,
+      "window": 12,
+      "negative": 8
+    },
+    "best_score": 0.0
+  }
+}

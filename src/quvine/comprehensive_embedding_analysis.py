@@ -1785,9 +1785,13 @@ class ComprehensiveEmbeddingAnalysis:
                 ctqw_targets = self._generate_quantum_targets(G, seeds)
                 dtqw_targets = ctqw_targets  # Use same targets for both
             
-            hp = (method_hyperparams or {}).get('gat', {})
+            # GAT methods use gat_baseline hyperparameters
+            hp = (method_hyperparams or {}).get('gat_baseline', {})
             if not hp and network_id:
-                hp = self._get_method_tuned_params(method_name, network_type=network_id) or {}
+                hp = self._get_method_tuned_params('gat_baseline', network_type=network_id) or {}
+            
+            if hp:
+                logger.info(f"GAT method {method_name} using tuned hyperparameters: {hp}")
             
             return generate_gat_embedding_by_method_name(
                 G=G,
@@ -1821,9 +1825,13 @@ class ComprehensiveEmbeddingAnalysis:
                 # For direct variants, we'd need pre-computed walk features
                 # For now, use targets for calibration
             
-            hp = (method_hyperparams or {}).get('graphgps', {})
+            # GraphGPS methods use graphgps_baseline hyperparameters
+            hp = (method_hyperparams or {}).get('graphgps_baseline', {})
             if not hp and network_id:
-                hp = self._get_method_tuned_params(method_name, network_type=network_id) or {}
+                hp = self._get_method_tuned_params('graphgps_baseline', network_type=network_id) or {}
+            
+            if hp:
+                logger.info(f"GraphGPS method {method_name} using tuned hyperparameters: {hp}")
             
             return generate_graphgps_embedding_by_method_name(
                 G=G,

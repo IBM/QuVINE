@@ -13,8 +13,21 @@
 # limitations under the License.
 
 import numpy as np
-from gensim.models import Word2Vec
 import hashlib
+import logging
+
+# Handle gensim import with better error handling
+try:
+    from gensim.models import Word2Vec
+    GENSIM_AVAILABLE = True
+except ImportError as e:
+    GENSIM_AVAILABLE = False
+    Word2Vec = None
+    logging.warning(
+        f"gensim not available or incompatible: {e}. "
+        "Word2Vec-based embeddings will not work. "
+        "Try: pip install gensim==4.3.0 or downgrade scipy."
+    )
 
 def corpus_to_embedding(
     corpus,
@@ -32,7 +45,16 @@ def corpus_to_embedding(
 
     corpus: List[List[str]] or List[List[int]]
     nodes:  List[str] or List[int]
+    
+    Raises:
+        ImportError: If gensim is not available or incompatible
     """
+    if not GENSIM_AVAILABLE:
+        raise ImportError(
+            "gensim is required for Word2Vec embeddings but is not available. "
+            "This may be due to scipy/gensim version incompatibility. "
+            "Try: pip install gensim==4.3.0 scipy==1.11.0"
+        )
     
     assert all(isinstance(w[0], str) for w in corpus)
     # ensure all nodes appear at least once

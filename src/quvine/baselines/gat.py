@@ -43,6 +43,31 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import networkx as nx
 
+# Import PyTorch utilities for better error handling
+try:
+    from ..utils.torch_utils import (
+        check_torch_available,
+        TorchNotAvailableError,
+        get_device
+    )
+    TORCH_UTILS_AVAILABLE = True
+except ImportError:
+    TORCH_UTILS_AVAILABLE = False
+    
+    # Fallback implementations
+    def check_torch_available():
+        try:
+            import torch
+            return True
+        except ImportError:
+            return False
+    
+    class TorchNotAvailableError(ImportError):
+        pass
+    
+    def get_device():
+        return "cpu"
+
 try:
     import torch
     import torch.nn as nn
@@ -93,8 +118,19 @@ class TrainConfig:
 # -----------------------------------------------------------------------------
 
 def require_torch() -> None:
+    """
+    Check if PyTorch is available and raise informative error if not.
+    
+    Raises:
+        TorchNotAvailableError: If PyTorch is not installed
+    """
     if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch is required. Install with: pip install torch")
+        raise TorchNotAvailableError(
+            "PyTorch is required for GAT embedding generation.\n"
+            "Install PyTorch with: pip install torch\n"
+            "See installation guide: https://pytorch.org/get-started/locally/\n"
+            "For CPU-only: pip install torch --index-url https://download.pytorch.org/whl/cpu"
+        )
 
 
 def set_seed(seed: int) -> None:

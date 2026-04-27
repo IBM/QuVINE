@@ -1,465 +1,386 @@
 #!/bin/bash
 ################################################################################
-# Hyperparameter Tuning — LSF Job Submission
+# Hyperparameter Tuning Job Submission — LSF
 #
-# Submits one LSF job per network type; each job calls
-# scripts/tune_hyperparameters.py with Optuna TPE search (or random search
-# if optuna is not installed).
+# DEFAULT (Parallel Mode):
+#   Submits one job per method × network type combination.
+#   Each job tunes hyperparameters for all 3 tasks (node_classification,
+#   link_prediction, node_ranking) for a single method on a single network type.
+#   Total jobs: N_METHODS × N_NETWORK_TYPES (default: 10 × 2 = 20 jobs)
 #
-# Structure:
-#   - 14 synthetic network types  (100-node pilot, 3 seeds each)
-#   - 5 real PPI networks          (BFS-subsampled to pilot size)
-#   - 1 merge job (ended() dependency on all tuning jobs)
-#     → merges per-network best_hyperparams.json into one final file
-#
-# NETWORK TYPES
-# ─────────────
-# Synthetic (from hard_negatives_v2 experiment):
-#   erdos_renyi, watts_strogatz_high_p, watts_strogatz_low_p, random_geometric
-#   modular_strong, modular_medium, modular_many_communities, core_periphery
-#   scale_free, powerlaw_cluster, stochastic_block_model
-#   real_karate, real_lesmis, real_polbooks
-#
-# Real PPI networks (subsampled to --pilot-nodes):
-#   BioPlex3, HumanNet, PCNet, ProteomeHD, STRING
+# SERIAL MODE (--serial flag):
+#   Submits one job per network type, processing all methods sequentially.
+#   Total jobs: N_NETWORK_TYPES (default: 2 jobs)
 #
 # Usage:
-#   bash scripts/submit_tuning_jobs.sh [options]
+#   # Parallel mode (default) - 20 jobs (10 methods × 2 networks)
+#   bash scripts/submit_tuning_jobs.sh
+#
+#   # Serial mode - 2 jobs
+#   bash scripts/submit_tuning_jobs.sh --serial
+#
+#   # Tune only on erdos_renyi network - 10 jobs
+#   bash scripts/submit_tuning_jobs.sh --networks erdos_renyi
+#
+#   # Tune on specific networks - 30 jobs (10 methods × 3 networks)
+#   bash scripts/submit_tuning_jobs.sh --networks erdos_renyi,modular,scale_free
+#
+#   # With options
+#   bash scripts/submit_tuning_jobs.sh --queue normal --walltime 48:00 --memory 32
+#   bash scripts/submit_tuning_jobs.sh --serial --n-graphs 20 --dry-run
 #
 # Options:
-#   --output-dir   DIR    Output root               (default: results/hparam_tuning)
-#   --n-trials     NUM    Optuna trials per method  (default: 30)
-#   --pilot-nodes  NUM    Nodes in pilot graphs     (default: 100)
-#   --pilot-seeds  NUM    Graph seeds per type      (default: 3)
-#   --queue        Q      LSF queue                 (default: normal)
-#   --walltime     T      Wall time per job         (default: 6:00)
-#   --memory       MEM    Memory in GB              (default: 16)
-#   --methods      LIST   Comma-separated methods   (default: all)
-#                         Presets: all | quantum | classical
-#   --python-env   PATH   Python binary path        (default: venv_quvine)
-#   --skip-real           Skip real PPI networks
-#   --synthetic-only      Alias for --skip-real
-#   --dry-run             Print job scripts, do not submit
-#   --merge-only          Only run the merge job (skip tuning submissions)
+#   --networks NET1,NET2,...  Network types to tune (default: erdos_renyi,modular)
+#   --serial                  Run all methods in one job per network (default: parallel)
+#   --queue QUEUE             LSF queue name (default: normal)
+#   --walltime TIME           Wall time limit (default: 48:00)
+#   --memory MEM              Memory in GB (default: 32)
+#   --n-graphs N              Number of graphs per trial (default: 10)
+#   --config FILE             Config file path (default: scripts/tuning_config.yaml)
+#   --dry-run                 Show what would be submitted without submitting
 #
 ################################################################################
 
 set -e
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
-OUTPUT_DIR="/dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning"
-N_TRIALS=30
-PILOT_NODES=100
-SMALL_PILOT_NODES=50    # used for networks that timed out at 100 nodes
-PILOT_SEEDS=3
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
 QUEUE="normal"
-WALLTIME="12:00"
-MEMORY="2"
-METHODS="all"
-SKIP_REAL=false
+WALLTIME="48:00"
+MEMORY="32"
+N_GRAPHS="10"
 DRY_RUN=false
-MERGE_ONLY=false
+SERIAL_MODE=false  # Default: parallel (one job per method × network)
+PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
+CONFIG_FILE="scripts/tuning_config.yaml"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
-PYTHON_ENV="${PROJECT_DIR}/../Python-3.12.2/venv_quvine/bin/python3"
+# Methods to tune (from config file)
+METHODS=(
+    "quvine_walks"
+    "baseline_filter_heat"
+    "baseline_filter_poly"
+    "baseline_gcnmf"
+    "node2vec"
+    "netmf"
+    "graphsage"
+    "appnp"
+    "gat_baseline"
+    "graphgps_baseline"
+)
 
-# ── Method presets ─────────────────────────────────────────────────────────────
-ALL_METHODS="quvine_walks,baseline_filter_heat,baseline_filter_poly,baseline_gcnmf,node2vec,netmf,graphsage"
-QUANTUM_METHODS="quvine_walks,baseline_filter_heat,baseline_filter_poly,baseline_gcnmf"
-CLASSICAL_METHODS="node2vec,netmf,graphsage"
+# Network types to tune on (default, can be overridden with --networks)
+NETWORK_TYPES=("erdos_renyi" "modular")
 
-# ── Argument parsing ───────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --output-dir)   OUTPUT_DIR="$2";   shift 2 ;;
-        --n-trials)     N_TRIALS="$2";     shift 2 ;;
-        --pilot-nodes)       PILOT_NODES="$2";       shift 2 ;;
-        --small-pilot-nodes) SMALL_PILOT_NODES="$2"; shift 2 ;;
-        --pilot-seeds)  PILOT_SEEDS="$2";  shift 2 ;;
-        --queue)        QUEUE="$2";        shift 2 ;;
-        --walltime)     WALLTIME="$2";     shift 2 ;;
-        --memory)       MEMORY="$2";       shift 2 ;;
-        --methods)      METHODS="$2";      shift 2 ;;
-        --python-env)   PYTHON_ENV="$2";   shift 2 ;;
-        --skip-real|--synthetic-only) SKIP_REAL=true; shift ;;
-        --dry-run)      DRY_RUN=true;      shift ;;
-        --merge-only)   MERGE_ONLY=true;   shift ;;
+        --queue)      QUEUE="$2";      shift 2 ;;
+        --walltime)   WALLTIME="$2";   shift 2 ;;
+        --memory)     MEMORY="$2";     shift 2 ;;
+        --n-graphs)   N_GRAPHS="$2";   shift 2 ;;
+        --python-env) PYTHON_ENV="$2"; shift 2 ;;
+        --config)     CONFIG_FILE="$2"; shift 2 ;;
+        --networks)
+            IFS=',' read -ra NETWORK_TYPES <<< "$2"
+            shift 2 ;;
+        --dry-run)    DRY_RUN=true;    shift ;;
+        --serial)     SERIAL_MODE=true; shift ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--output-dir DIR] [--n-trials N] [--pilot-nodes N]"
-            echo "          [--small-pilot-nodes N] [--pilot-seeds N] [--queue Q]"
-            echo "          [--walltime T] [--memory M]"
-            echo "          [--methods all|quantum|classical|<list>]"
-            echo "          [--python-env PATH] [--skip-real] [--dry-run] [--merge-only]"
+            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--n-graphs N]"
+            echo "          [--networks NET1,NET2,...] [--serial] [--dry-run]"
             exit 1 ;;
     esac
 done
 
-# ── Resolve method preset ──────────────────────────────────────────────────────
-case "$METHODS" in
-    all)       SELECTED_METHODS="$ALL_METHODS"       ;;
-    quantum)   SELECTED_METHODS="$QUANTUM_METHODS"   ;;
-    classical) SELECTED_METHODS="$CLASSICAL_METHODS" ;;
-    *)         SELECTED_METHODS="$METHODS"            ;;
-esac
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+OUTPUT_BASE="/dccstor/boseukb/Q/NetMed/QuVINE/tuning_by_task"
+LOG_DIR="${OUTPUT_BASE}/logs"
 
-# Convert comma-separated methods to space-separated for argparse
-METHODS_ARGS="${SELECTED_METHODS//,/ }"
+mkdir -p "$LOG_DIR" "$OUTPUT_BASE"
 
-# ── Derived paths ──────────────────────────────────────────────────────────────
-TUNING_SCRIPT="${PROJECT_DIR}/scripts/tune_hyperparameters.py"
-VENV_ACTIVATE="${PYTHON_ENV%/python3}/activate"
-[ ! -f "$VENV_ACTIVATE" ] && VENV_ACTIVATE="${PYTHON_ENV%/bin/python3}/bin/activate"
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
+if [ "$SERIAL_MODE" = true ]; then
+    TOTAL_JOBS=${#NETWORK_TYPES[@]}
+    MODE_DESC="Serial (all methods per job)"
+else
+    TOTAL_JOBS=$((${#METHODS[@]} * ${#NETWORK_TYPES[@]}))
+    MODE_DESC="Parallel (one method per job)"
+fi
 
-mkdir -p "${OUTPUT_DIR}/logs"
-
-# ── Network type arrays ────────────────────────────────────────────────────────
-SYNTHETIC_TYPES=(
-    erdos_renyi
-    watts_strogatz_high_p
-    watts_strogatz_low_p
-    random_geometric
-    modular_strong
-    modular_medium
-    modular_many_communities
-    core_periphery
-    scale_free
-    powerlaw_cluster
-    stochastic_block_model
-    real_karate
-    real_lesmis
-    real_polbooks
-)
-
-# Networks that timed out at 100 pilot nodes (GCNMF too slow) → use SMALL_PILOT_NODES
-SLOW_SYNTHETIC_TYPES=(
-    erdos_renyi
-    watts_strogatz_high_p
-    watts_strogatz_low_p
-    modular_strong
-    modular_medium
-    modular_many_communities
-    scale_free
-    powerlaw_cluster
-    stochastic_block_model
-)
-
-REAL_NETWORKS=(
-    BioPlex3
-    HumanNet
-    PCNet
-    ProteomeHD
-    STRING
-)
-
-# ── Banner ─────────────────────────────────────────────────────────────────────
-N_SYNTHETIC=${#SYNTHETIC_TYPES[@]}
-N_REAL=0
-[ "$SKIP_REAL" = false ] && N_REAL=${#REAL_NETWORKS[@]}
-TOTAL_JOBS=$(( N_SYNTHETIC + N_REAL ))
-
-echo "============================================================"
-echo " Hyperparameter Tuning — Job Submission"
-echo "============================================================"
-echo " Project dir    : ${PROJECT_DIR}"
-echo " Tuning script  : ${TUNING_SCRIPT}"
-echo " Output dir     : ${OUTPUT_DIR}"
-echo " Synthetic types: ${N_SYNTHETIC}"
-echo " Real networks  : ${N_REAL}"
-echo " Total jobs     : ${TOTAL_JOBS}  (+1 merge)"
-echo " Trials/method  : ${N_TRIALS}"
-echo " Pilot nodes    : ${PILOT_NODES}  (slow nets: ${SMALL_PILOT_NODES})"
-echo " Pilot seeds    : ${PILOT_SEEDS}"
-echo " LSF queue      : ${QUEUE}"
-echo " Wall time      : ${WALLTIME}"
-echo " Memory         : ${MEMORY}GB"
-echo " Python env     : ${PYTHON_ENV}"
-echo " Methods        : ${SELECTED_METHODS}"
-echo " Skip real nets : ${SKIP_REAL}"
-echo " Dry run        : ${DRY_RUN}"
-echo " Merge only     : ${MERGE_ONLY}"
-echo "============================================================"
+echo "======================================================"
+echo " Hyperparameter Tuning Job Submission"
+echo "======================================================"
+echo " Project dir  : $PROJECT_DIR"
+echo " Output dir   : $OUTPUT_BASE"
+echo " Config file  : $CONFIG_FILE"
+echo " Queue        : $QUEUE"
+echo " Wall time    : $WALLTIME"
+echo " Memory       : ${MEMORY}GB"
+echo " Graphs/trial : ${N_GRAPHS}"
+echo " Methods      : ${#METHODS[@]} (${METHODS[*]})"
+echo " Networks     : ${#NETWORK_TYPES[@]} (${NETWORK_TYPES[*]})"
+echo " Mode         : ${MODE_DESC}"
+echo " Total jobs   : ${TOTAL_JOBS}"
+echo " Dry run      : $DRY_RUN"
+echo "======================================================"
 echo ""
-[ "$DRY_RUN" = true ] && echo "DRY RUN — no jobs will be submitted" && echo ""
+[ "$DRY_RUN" = true ] && echo "DRY RUN MODE — no jobs will be submitted" && echo ""
 
-TUNING_JOB_IDS=()
+# ---------------------------------------------------------------------------
+# Submit jobs
+# ---------------------------------------------------------------------------
+JOB_IDS=()
 JOB_COUNT=0
 
-# ── _submit_tuning_job <label> <type_arg> <skip_real_flag> [pilot_nodes] ───────
-# label          : job name and per-type output subdir
-# type_arg       : --network-type value (e.g. "erdos_renyi" or "real_BioPlex3")
-# skip_real_flag : "--skip-real" or ""
-# pilot_nodes    : override for this job (defaults to global PILOT_NODES)
-_submit_tuning_job() {
-    local label="$1"
-    local type_arg="$2"          # e.g. "erdos_renyi" or "real_BioPlex3"
-    local skip_real_flag="$3"    # "--skip-real" or ""
-    local job_pilot_nodes="${4:-${PILOT_NODES}}"  # per-job override
+if [ "$SERIAL_MODE" = true ]; then
+    # Serial mode: One job per network type, processing all methods
+    for NET_TYPE in "${NETWORK_TYPES[@]}"; do
+        JOB_NAME="tune_all_methods_${NET_TYPE}"
+        JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+        JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+        JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
 
-    local job_name="tune_${label}"
-    local job_out_dir="${OUTPUT_DIR}/${label}"
-    local log_file="${OUTPUT_DIR}/logs/${job_name}.out"
-    local err_file="${OUTPUT_DIR}/logs/${job_name}.err"
-    local job_script="${OUTPUT_DIR}/logs/${job_name}.sh"
-
-    mkdir -p "${job_out_dir}"
-
-    cat > "${job_script}" << JOBEOF
+        cat > "$JOB_SH" << BSUBEOF
 #!/bin/bash
-#BSUB -J ${job_name}
-#BSUB -o ${log_file}
-#BSUB -e ${err_file}
+#BSUB -J ${JOB_NAME}
+#BSUB -o ${JOB_OUT}
+#BSUB -e ${JOB_ERR}
 #BSUB -q ${QUEUE}
 #BSUB -W ${WALLTIME}
 #BSUB -M ${MEMORY}GB
 #BSUB -R "rusage[mem=${MEMORY}GB]"
 
-source ${VENV_ACTIVATE}
+source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
 
-echo "========================================"
-echo " Tuning: ${label}"
-echo " Output : ${job_out_dir}"
-echo " Started: \$(date)"
-echo "========================================"
+echo "======================================================"
+echo " Tuning: ALL METHODS on ${NET_TYPE} (SERIAL)"
+echo "======================================================"
+echo " Start time: \$(date)"
+echo " Config: ${CONFIG_FILE}"
+echo " Methods: ${METHODS[*]}"
+echo "======================================================"
+echo ""
 
-${PYTHON_ENV} ${TUNING_SCRIPT} \\
-    --network-type ${type_arg} \\
-    --output-dir   ${job_out_dir} \\
-    --n-trials     ${N_TRIALS} \\
-    --pilot-nodes  ${job_pilot_nodes} \\
-    --pilot-seeds  ${PILOT_SEEDS} \\
-    --methods      ${METHODS_ARGS} \\
-    ${skip_real_flag}
+python scripts/tune_by_task_with_config.py \\
+    --config ${CONFIG_FILE} \\
+    --network-type ${NET_TYPE} \\
+    --n-graphs ${N_GRAPHS} \\
+    --output-dir ${OUTPUT_BASE}
 
-echo "========================================"
-echo " Finished: ${label}  at \$(date)"
-echo "========================================"
+EXIT_CODE=\$?
 
-exit \$?
-JOBEOF
+echo ""
+echo "======================================================"
+echo " Tuning complete: ALL METHODS on ${NET_TYPE}"
+echo " Exit code: \$EXIT_CODE"
+echo " End time: \$(date)"
+echo "======================================================"
 
-    chmod +x "${job_script}"
+exit \$EXIT_CODE
+BSUBEOF
 
-    if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY RUN] bsub < ${job_script}"
-    else
-        local bsub_out job_id
-        bsub_out=$(bsub < "${job_script}" 2>&1) || true
-        job_id=$(echo "$bsub_out" | grep -oP 'Job <\K[0-9]+') || true
-        if [ -n "$job_id" ]; then
-            echo "  Submitted ${job_id}: ${job_name}"
-            TUNING_JOB_IDS+=("$job_id")
-            JOB_COUNT=$(( JOB_COUNT + 1 ))
+        chmod +x "$JOB_SH"
+
+        if [ "$DRY_RUN" = true ]; then
+            echo "  [DRY RUN] $JOB_NAME"
         else
-            echo "  ERROR: submission failed for ${job_name}: ${bsub_out}"
-        fi
-    fi
-}
-
-# ── Helper: check if a network type is in the slow list ───────────────────────
-_is_slow_network() {
-    local net="$1"
-    for slow in "${SLOW_SYNTHETIC_TYPES[@]}"; do
-        [ "$slow" = "$net" ] && return 0
-    done
-    return 1
-}
-
-# ── Helper: check if a network already has best_hyperparams.json ──────────────
-_is_done() {
-    local label="$1"
-    [ -f "${OUTPUT_DIR}/${label}/best_hyperparams.json" ]
-}
-
-# ── Submit synthetic network jobs ──────────────────────────────────────────────
-if [ "$MERGE_ONLY" = false ]; then
-    echo "── Synthetic network types ──────────────────────────────────"
-    for net_type in "${SYNTHETIC_TYPES[@]}"; do
-        if _is_done "${net_type}"; then
-            echo "  [SKIP] ${net_type} (already done)"
-            continue
-        fi
-        if _is_slow_network "${net_type}"; then
-            _submit_tuning_job "${net_type}" "${net_type}" "--skip-real" "${SMALL_PILOT_NODES}"
-        else
-            _submit_tuning_job "${net_type}" "${net_type}" "--skip-real" "${PILOT_NODES}"
-        fi
-    done
-
-    # ── Submit real network jobs ───────────────────────────────────────────────
-    if [ "$SKIP_REAL" = false ]; then
-        echo ""
-        echo "── Real PPI networks ────────────────────────────────────────"
-        for net_name in "${REAL_NETWORKS[@]}"; do
-            if _is_done "real_${net_name}"; then
-                echo "  [SKIP] real_${net_name} (already done)"
-                continue
+            JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+            if [ -n "$JOB_ID" ]; then
+                echo "  Submitted $JOB_ID: $JOB_NAME"
+                JOB_IDS+=("$JOB_ID")
+                JOB_COUNT=$((JOB_COUNT + 1))
+            else
+                echo "  ERROR: failed to submit $JOB_NAME"
             fi
-            _submit_tuning_job "real_${net_name}" "real_${net_name}" ""
-        done
-    fi
+        fi
+    done
+else
+    # Parallel mode (default): One job per method × network type
+    for METHOD in "${METHODS[@]}"; do
+        for NET_TYPE in "${NETWORK_TYPES[@]}"; do
+            JOB_NAME="tune_${METHOD}_${NET_TYPE}"
+            JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+            JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+            JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+            RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
 
-    echo ""
-    echo "============================================================"
-    echo " Tuning jobs submitted: ${JOB_COUNT} / ${TOTAL_JOBS}"
-    echo "============================================================"
+            cat > "$JOB_SH" << BSUBEOF
+#!/bin/bash
+#BSUB -J ${JOB_NAME}
+#BSUB -o ${JOB_OUT}
+#BSUB -e ${JOB_ERR}
+#BSUB -q ${QUEUE}
+#BSUB -W ${WALLTIME}
+#BSUB -M ${MEMORY}GB
+#BSUB -R "rusage[mem=${MEMORY}GB]"
+
+source ${PROJECT_DIR}/${PYTHON_ENV}
+cd ${PROJECT_DIR}
+
+echo "======================================================"
+echo " Tuning: ${METHOD} on ${NET_TYPE}"
+echo "======================================================"
+echo " Start time: \$(date)"
+echo " Config: ${CONFIG_FILE}"
+echo " Output: ${RESULT_FILE}"
+echo "======================================================"
+echo ""
+
+python scripts/tune_by_task_with_config.py \\
+    --config ${CONFIG_FILE} \\
+    --methods ${METHOD} \\
+    --network-type ${NET_TYPE} \\
+    --n-graphs ${N_GRAPHS} \\
+    --output-dir ${OUTPUT_BASE}
+
+EXIT_CODE=\$?
+
+echo ""
+echo "======================================================"
+echo " Tuning complete: ${METHOD} on ${NET_TYPE}"
+echo " Exit code: \$EXIT_CODE"
+echo " End time: \$(date)"
+echo "======================================================"
+
+exit \$EXIT_CODE
+BSUBEOF
+
+            chmod +x "$JOB_SH"
+
+            if [ "$DRY_RUN" = true ]; then
+                echo "  [DRY RUN] $JOB_NAME"
+            else
+                JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+                if [ -n "$JOB_ID" ]; then
+                    echo "  Submitted $JOB_ID: $JOB_NAME"
+                    JOB_IDS+=("$JOB_ID")
+                    JOB_COUNT=$((JOB_COUNT + 1))
+                else
+                    echo "  ERROR: failed to submit $JOB_NAME"
+                fi
+            fi
+        done
+    done
 fi
 
-# ── Build ended() dependency string ───────────────────────────────────────────
+echo ""
+echo "======================================================"
+echo " Jobs submitted: $JOB_COUNT / $TOTAL_JOBS"
+echo "======================================================"
+
+# ---------------------------------------------------------------------------
+# Aggregation job (depends on all tuning jobs)
+# ---------------------------------------------------------------------------
+AGG_NAME="tune_aggregate"
+AGG_SH="${LOG_DIR}/${AGG_NAME}.sh"
+
 DEPENDENCY_STRING=""
-for job_id in "${TUNING_JOB_IDS[@]}"; do
+for JID in "${JOB_IDS[@]}"; do
     if [ -z "$DEPENDENCY_STRING" ]; then
-        DEPENDENCY_STRING="ended(${job_id})"
+        DEPENDENCY_STRING="done($JID)"
     else
-        DEPENDENCY_STRING="${DEPENDENCY_STRING} && ended(${job_id})"
+        DEPENDENCY_STRING="${DEPENDENCY_STRING} && done($JID)"
     fi
 done
 
-# ── Merge job — combines all per-network best_hyperparams.json files ───────────
-merge_job_name="tune_merge"
-merge_job_script="${OUTPUT_DIR}/logs/${merge_job_name}.sh"
-
-cat > "${merge_job_script}" << MERGEEOF
+cat > "$AGG_SH" << BSUBEOF
 #!/bin/bash
-#BSUB -J ${merge_job_name}
-#BSUB -o ${OUTPUT_DIR}/logs/${merge_job_name}.out
-#BSUB -e ${OUTPUT_DIR}/logs/${merge_job_name}.err
+#BSUB -J ${AGG_NAME}
+#BSUB -o ${LOG_DIR}/${AGG_NAME}.out
+#BSUB -e ${LOG_DIR}/${AGG_NAME}.err
 #BSUB -q ${QUEUE}
-#BSUB -W 0:30
+#BSUB -W 1:00
 #BSUB -M 8GB
 #BSUB -R "rusage[mem=8GB]"
 $([ -n "$DEPENDENCY_STRING" ] && echo "#BSUB -w \"${DEPENDENCY_STRING}\"")
 
-source ${VENV_ACTIVATE}
+source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
 
-echo "========================================"
-echo " Merging hyperparameter tuning results"
-echo " Started: \$(date)"
-echo "========================================"
+echo "======================================================"
+echo " Aggregating tuning results"
+echo "======================================================"
+echo " Start time: \$(date)"
+echo " Output dir: ${OUTPUT_BASE}"
+echo "======================================================"
+echo ""
 
-${PYTHON_ENV} - << 'PYEOF'
+python - << 'PYEOF'
 import json
-import sys
+import os
 from pathlib import Path
 
-output_root = Path("${OUTPUT_DIR}")
-merged_best: dict = {}
-merged_full: dict = {"synthetic": {}, "real": {}}
-errors = []
+output_dir = Path('${OUTPUT_BASE}')
+results = {}
 
-# Collect all per-network-type result files
-for subdir in sorted(output_root.iterdir()):
-    if not subdir.is_dir() or subdir.name == "logs":
-        continue
-    json_file = subdir / "best_hyperparams.json"
-    if not json_file.exists():
-        errors.append(f"MISSING: {json_file}")
-        continue
-    try:
-        with open(json_file) as f:
-            data = json.load(f)
-        net_type = subdir.name
-        # Merge best_params section
-        bp = data.get("best_params", {})
-        for k, v in bp.items():
-            if k not in merged_best:
-                merged_best[k] = v
-            else:
-                merged_best[k].update(v)
-        # Merge _full section
-        full = data.get("_full", {})
-        for category in ["synthetic", "real"]:
-            for nt, nt_data in full.get(category, {}).items():
-                merged_full[category][nt] = nt_data
-        print(f"  Merged: {net_type}")
-    except Exception as e:
-        errors.append(f"ERROR reading {json_file}: {e}")
+# Collect all individual method results
+for json_file in output_dir.glob('*_tuning_by_task.json'):
+    print(f'Loading: {json_file.name}')
+    with open(json_file) as f:
+        data = json.load(f)
+        results.update(data)
 
-# Write final merged file
-out_file = output_root / "best_hyperparams.json"
-with open(out_file, "w") as f:
-    json.dump({"_full": merged_full, "best_params": merged_best}, f, indent=2, default=str)
+# Save aggregated results
+for net_type in ['erdos_renyi', 'modular']:
+    net_results = {}
+    for method, tasks in results.items():
+        if any(f'{net_type}_{method}' in str(f) for f in output_dir.glob('*.json')):
+            net_results[method] = tasks
+    
+    if net_results:
+        output_file = output_dir / f'{net_type}_tuning_by_task.json'
+        with open(output_file, 'w') as f:
+            json.dump(net_results, f, indent=2)
+        print(f'Saved: {output_file}')
+        print(f'  Methods: {len(net_results)}')
 
-# Write a clean summary CSV
-import csv
-rows = []
-for net_type, methods_data in merged_best.items():
-    if net_type.startswith("_"):
-        continue
-    scores = methods_data.get("_scores", {})
-    for method, params in methods_data.items():
-        if method.startswith("_") or not isinstance(params, dict):
-            continue
-        rows.append({
-            "network_type": net_type,
-            "method": method,
-            "score": scores.get(method, ""),
-            **{f"param_{k}": v for k, v in params.items()},
-        })
-
-if rows:
-    csv_file = output_root / "best_hyperparams_summary.csv"
-    fieldnames = list(rows[0].keys())
-    with open(csv_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"Summary CSV: {csv_file}")
-
-print(f"\\nMerged {len(merged_best)} network types → {out_file}")
-if errors:
-    print(f"\\nWarnings ({len(errors)}):")
-    for e in errors:
-        print(f"  {e}")
-sys.exit(len(errors) > 0)
+print('')
+print('Aggregation complete!')
 PYEOF
 
-echo "========================================"
-echo " Merge complete at \$(date)"
-echo " Output: ${OUTPUT_DIR}/best_hyperparams.json"
-echo " Summary: ${OUTPUT_DIR}/best_hyperparams_summary.csv"
-echo "========================================"
+EXIT_CODE=\$?
 
-exit \$?
-MERGEEOF
+echo ""
+echo "======================================================"
+echo " Aggregation complete"
+echo " Exit code: \$EXIT_CODE"
+echo " End time: \$(date)"
+echo "======================================================"
 
-chmod +x "${merge_job_script}"
+exit \$EXIT_CODE
+BSUBEOF
+
+chmod +x "$AGG_SH"
 
 if [ "$DRY_RUN" = true ]; then
+    echo "  [DRY RUN] Aggregation: $AGG_NAME"
+elif [ ${#JOB_IDS[@]} -gt 0 ]; then
     echo ""
-    echo "  [DRY RUN] bsub < ${merge_job_script}"
-    [ -n "$DEPENDENCY_STRING" ] && echo "  [DRY RUN] Dependencies: ${DEPENDENCY_STRING}"
-elif [ "$MERGE_ONLY" = true ]; then
-    echo ""
-    echo "Submitting merge job (no dependency — merge-only mode)..."
-    merge_id=$(bsub < "${merge_job_script}" 2>&1 | grep -oP 'Job <\K[0-9]+')
-    if [ -n "$merge_id" ]; then
-        echo "  Submitted merge job ${merge_id}"
+    echo "Submitting aggregation job ..."
+    AGG_ID=$(bsub < "$AGG_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+    if [ -n "$AGG_ID" ]; then
+        echo "  Submitted aggregation job $AGG_ID (depends on $JOB_COUNT jobs)"
     else
-        echo "  ERROR: merge job submission failed"
+        echo "  ERROR: failed to submit aggregation job"
     fi
-elif [ ${#TUNING_JOB_IDS[@]} -gt 0 ]; then
-    echo ""
-    echo "Submitting merge job (waits for all tuning jobs)..."
-    merge_id=$(bsub < "${merge_job_script}" 2>&1 | grep -oP 'Job <\K[0-9]+')
-    if [ -n "$merge_id" ]; then
-        echo "  Submitted merge job ${merge_id}  (waits for ${#TUNING_JOB_IDS[@]} jobs via ended())"
-    else
-        echo "  ERROR: merge job submission failed"
-    fi
-else
-    echo "  No tuning jobs submitted — skipping merge job."
 fi
 
 echo ""
-echo "============================================================"
-echo " SUBMISSION SUMMARY"
-echo " Tuning jobs  : ${JOB_COUNT} / ${TOTAL_JOBS}"
-echo " Output root  : ${OUTPUT_DIR}/"
-echo " Final params : ${OUTPUT_DIR}/best_hyperparams.json"
-echo " Monitor with : bjobs -u \$USER"
-echo " Kill all with: bkill -J 'tune_*'"
-echo "============================================================"
+echo "======================================================"
+echo " SUBMISSION COMPLETE"
+echo " Monitor: bjobs -u \$USER"
+echo " Results: ${OUTPUT_BASE}/"
+echo "======================================================"
+
+# Made with Bob

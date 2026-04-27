@@ -1,0 +1,109 @@
+{
+  "quvine_walks": {
+    "best_params": {
+      "num_views": 2,
+      "max_degree": 45,
+      "degree_alpha": 0.49364981804232755,
+      "num_walks": 9,
+      "walk_length": 104,
+      "restart_prob": 0.12338512109369544,
+      "embedding_dim": 256,
+      "window": 6,
+      "negative": 10,
+      "epochs": 13
+    },
+    "best_score": 0.47122154004976746
+  },
+  "baseline_filter_heat": {
+    "best_params": {
+      "embedding_dim": 256,
+      "filter_t": 4.824531425369476,
+      "filter_order": 8
+    },
+    "best_score": 0.0
+  },
+  "baseline_filter_poly": {
+    "best_params": {
+      "embedding_dim": 128,
+      "filter_t": 1.8310825177589134,
+      "filter_order": 7
+    },
+    "best_score": 0.0
+  },
+  "baseline_gcnmf": {
+    "best_params": {
+      "embedding_dim": 256,
+      "gcnmf_layers": 2,
+      "gcnmf_alpha": 0.08885527161550208
+    },
+    "best_score": 0.0
+  },
+  "node2vec": {
+    "best_params": {
+      "dimensions": 128,
+      "walk_length": 86,
+      "num_walks": 9,
+      "p": 0.5604952415772695,
+      "q": 0.8017048138855659,
+      "window": 10
+    },
+    "best_score": 0.4075066388556574
+  },
+  "netmf": {
+    "best_params": {
+      "embedding_dim": 256,
+      "window": 12,
+      "negative": 8
+    },
+    "best_score": 0.0
+  },
+  "graphsage": {
+    "best_params": {
+      "embedding_dim": 128,
+      "num_layers": 2,
+      "aggregator": "mean"
+    },
+    "best_score": 0.0
+  },
+  "appnp": {
+    "best_params": {
+      "embedding_dim": 64,
+      "alpha": 0.16824128122562448,
+      "num_iterations": 13
+    },
+    "best_score": 0.0
+  },
+  "gat_baseline": {
+    "best_params": {
+      "embedding_dim": 128,
+      "hidden_dim": 128,
+      "num_layers": 4,
+      "lr": 0.0001,
+      "weight_decay": 0.001,
+      "dropout": 0.0,
+      "heads": 4,
+      "attn_dropout": 0.2,
+      "concat_heads": "True",
+      "residual": "True",
+      "epochs": 300
+    },
+    "best_score": 0.0
+  },
+  "graphgps_baseline": {
+    "best_params": {
+      "embedding_dim": 256,
+      "hidden_dim": 256,
+      "num_layers": 4,
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "dropout": 0.2,
+      "gps_layers": 3,
+      "num_heads": 2,
+      "pe_dim": 16,
+      "attn_dropout": 0.2,
+      "local_gnn": "gat",
+      "epochs": 200
+    },
+    "best_score": 0.0
+  }
+}

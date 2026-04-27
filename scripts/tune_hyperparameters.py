@@ -144,7 +144,7 @@ SYNTHETIC_NETWORK_TYPES = [
     "real_polbooks",
 ]
 
-# Representative methods for tuning (tune these 8, reuse for all 39)
+# Representative methods for tuning (tune these 10, reuse for all 39)
 ALL_METHODS = [
     "quvine_walks",        # Representative for all 11 quvine_* methods
     "baseline_filter_heat",
@@ -154,6 +154,8 @@ ALL_METHODS = [
     "netmf",
     "graphsage",
     "appnp",
+    "gat_baseline",        # Representative for all 12 GAT methods
+    "graphgps_baseline",   # Representative for all 12 GraphGPS methods
 ]
 
 # Full list of 39 methods (for reference and validation)
@@ -184,15 +186,18 @@ ALL_39_METHODS = [
 METHOD_TUNING_MAP = {
     # All quvine methods use quvine_walks params
     **{m: "quvine_walks" for m in ALL_39_METHODS if m.startswith("quvine_")},
-    # All GAT methods use gat_baseline params (default, not tuned)
+    # All GAT methods use gat_baseline params
     **{m: "gat_baseline" for m in ALL_39_METHODS if m.startswith("gat_")},
-    # All GraphGPS methods use graphgps_baseline params (default, not tuned)
+    # All GraphGPS methods use graphgps_baseline params
     **{m: "graphgps_baseline" for m in ALL_39_METHODS if m.startswith("graphgps_")},
     # Classical methods tune individually
     "node2vec": "node2vec",
     "netmf": "netmf",
     "graphsage": "graphsage",
     "baseline_gcnmf": "baseline_gcnmf",
+    "appnp": "appnp",
+    "baseline_filter_heat": "baseline_filter_heat",
+    "baseline_filter_poly": "baseline_filter_poly",
 }
 
 # ── Graph generation ─────────────────────────────────────────────────────────
@@ -765,6 +770,51 @@ def suggest_appnp(trial: Any) -> Dict[str, Any]:
     }
 
 
+def suggest_gat_baseline(trial: Any) -> Dict[str, Any]:
+    """
+    Hyperparameter space for GAT methods.
+    Combines common GNN parameters with GAT-specific parameters.
+    """
+    return {
+        # Common GNN parameters
+        "embedding_dim": trial.suggest_categorical("embedding_dim", [64, 128, 256]),
+        "hidden_dim":    trial.suggest_categorical("hidden_dim", [64, 128, 256]),
+        "num_layers":    trial.suggest_int("num_layers", 2, 4),
+        "lr":            trial.suggest_categorical("lr", [1e-4, 3e-4, 1e-3, 3e-3]),
+        "weight_decay":  trial.suggest_categorical("weight_decay", [0, 1e-5, 1e-4, 1e-3]),
+        "dropout":       trial.suggest_categorical("dropout", [0.0, 0.2, 0.4, 0.6]),
+        # GAT-specific parameters
+        "heads":         trial.suggest_categorical("heads", [2, 4, 8]),
+        "attn_dropout":  trial.suggest_categorical("attn_dropout", [0.0, 0.2, 0.4, 0.6]),
+        "concat_heads":  trial.suggest_categorical("concat_heads", [True, False]),
+        "residual":      trial.suggest_categorical("residual", [True, False]),
+        "epochs":        trial.suggest_categorical("epochs", [100, 200, 300]),
+    }
+
+
+def suggest_graphgps_baseline(trial: Any) -> Dict[str, Any]:
+    """
+    Hyperparameter space for GraphGPS methods.
+    Combines common GNN parameters with GraphGPS-specific parameters.
+    """
+    return {
+        # Common GNN parameters
+        "embedding_dim": trial.suggest_categorical("embedding_dim", [64, 128, 256]),
+        "hidden_dim":    trial.suggest_categorical("hidden_dim", [64, 128, 256]),
+        "num_layers":    trial.suggest_int("num_layers", 2, 4),
+        "lr":            trial.suggest_categorical("lr", [1e-4, 3e-4, 1e-3, 3e-3]),
+        "weight_decay":  trial.suggest_categorical("weight_decay", [0, 1e-5, 1e-4, 1e-3]),
+        "dropout":       trial.suggest_categorical("dropout", [0.0, 0.2, 0.4, 0.6]),
+        # GraphGPS-specific parameters
+        "gps_layers":    trial.suggest_int("gps_layers", 2, 4),
+        "num_heads":     trial.suggest_categorical("num_heads", [2, 4, 8]),
+        "pe_dim":        trial.suggest_categorical("pe_dim", [8, 16, 32]),
+        "attn_dropout":  trial.suggest_categorical("attn_dropout", [0.0, 0.2, 0.4]),
+        "local_gnn":     trial.suggest_categorical("local_gnn", ["sage", "gcn", "gat"]),
+        "epochs":        trial.suggest_categorical("epochs", [100, 200, 300]),
+    }
+
+
 SUGGESTERS = {
     "quvine_walks":         suggest_quvine_walks,
     "baseline_filter_heat": suggest_filter_heat,
@@ -774,6 +824,8 @@ SUGGESTERS = {
     "netmf":                suggest_netmf,
     "graphsage":            suggest_graphsage,
     "appnp":                suggest_appnp,
+    "gat_baseline":         suggest_gat_baseline,
+    "graphgps_baseline":    suggest_graphgps_baseline,
 }
 
 # Default params (used as the first trial / fallback best)

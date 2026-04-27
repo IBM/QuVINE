@@ -401,11 +401,8 @@ def generate_quvine_poly_embedding(
     np.random.seed(random_state)
     N = G.number_of_nodes()
     
-    # Get Laplacian
-    L = get_laplacian(G, normalize=True)
-    
-    # Create node to index mapping
-    node_to_idx = {node: idx for idx, node in enumerate(G.nodes())}
+    # Get Laplacian - unpack the tuple!
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=True)
     
     # Calibrate polynomial filter
     coeffs = calibrate_polynomial_filter(L, q_targets, node_to_idx, K=K, ridge=ridge)
@@ -456,8 +453,8 @@ def generate_baseline_filter_embedding(
     np.random.seed(random_state)
     N = G.number_of_nodes()
     
-    # Get Laplacian
-    L = get_laplacian(G, normalize=normalize)
+    # Get Laplacian - unpack the tuple!
+    L, nodelist, node_to_idx = get_laplacian(G, normalize=normalize)
     
     # Generate or use features
     if use_features and features is not None:
@@ -477,6 +474,8 @@ def generate_baseline_filter_embedding(
         Z = apply_polynomial_filter(L, X, coeffs)
     else:
         raise ValueError(f"Unknown filter type: {filter_type}")
+    
+    return Z
     
 
 

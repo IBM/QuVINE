@@ -642,6 +642,7 @@ def compute_graph_complexity_metrics(G: nx.Graph) -> Dict[str, float]:
             'centrality_range': 0.0,
             'num_nodes': 0,
             'num_edges': 0,
+            'density': 0.0,
             # Topological metrics
             'orc_gJC_mean': 0.0,
             'orc_kLB_mean': 0.0,
@@ -657,6 +658,7 @@ def compute_graph_complexity_metrics(G: nx.Graph) -> Dict[str, float]:
         # Basic properties
         'num_nodes': G.number_of_nodes(),
         'num_edges': G.number_of_edges(),
+        'density': nx.density(G),
 
         # Spectral properties
         'spectral_gap': compute_spectral_gap(G, normalized=True),

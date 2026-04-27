@@ -1,0 +1,364 @@
+{
+  "quvine_walks": {
+    "node_classification": {
+      "best_params": {
+        "num_views": 2,
+        "max_degree": 59,
+        "degree_alpha": 0.5298535759484612,
+        "num_walks": 15,
+        "walk_length": 115,
+        "restart_prob": 0.19730024143003153,
+        "embedding_dim": 256,
+        "window": 5,
+        "negative": 5,
+        "epochs": 6
+      },
+      "best_score": 0.0
+    },
+    "link_prediction": {
+      "best_params": {
+        "num_views": 4,
+        "max_degree": 43,
+        "degree_alpha": 0.3012975066810228,
+        "num_walks": 16,
+        "walk_length": 43,
+        "restart_prob": 0.1241350959072173,
+        "embedding_dim": 256,
+        "window": 15,
+        "negative": 10,
+        "epochs": 14
+      },
+      "best_score": 0.0
+    },
+    "node_ranking": {
+      "best_params": {
+        "num_views": 3,
+        "max_degree": 34,
+        "degree_alpha": 0.6376802862110679,
+        "num_walks": 11,
+        "walk_length": 69,
+        "restart_prob": 0.2606458423938248,
+        "embedding_dim": 256,
+        "window": 10,
+        "negative": 3,
+        "epochs": 13
+      },
+      "best_score": 0.0
+    }
+  },
+  "baseline_filter_heat": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 4.824531425369476,
+        "filter_order": 8
+      },
+      "best_score": 0.6104197903981631
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 4.824531425369476,
+        "filter_order": 8
+      },
+      "best_score": 0.929645466082713
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 64,
+        "filter_t": 3.645441574645223,
+        "filter_order": 9
+      },
+      "best_score": 0.638095238095238
+    }
+  },
+  "baseline_filter_poly": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 4.824531425369476,
+        "filter_order": 8
+      },
+      "best_score": 0.4318984749662453
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 3.981296002634664,
+        "filter_order": 9
+      },
+      "best_score": 0.6402952313883489
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 3.981296002634664,
+        "filter_order": 9
+      },
+      "best_score": 0.5714285714285714
+    }
+  },
+  "baseline_gcnmf": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 32,
+        "mf_dim": 128,
+        "gcnmf_layers": 3,
+        "epochs": 300,
+        "lr": 0.01,
+        "weight_decay": 0.0
+      },
+      "best_score": 0.4857016383975639
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "mf_dim": 32,
+        "gcnmf_layers": 2,
+        "epochs": 100,
+        "lr": 0.001,
+        "weight_decay": 0.0
+      },
+      "best_score": 0.8933397739065757
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "mf_dim": 32,
+        "gcnmf_layers": 2,
+        "epochs": 100,
+        "lr": 0.001,
+        "weight_decay": 0.0
+      },
+      "best_score": 0.6238095238095238
+    }
+  },
+  "node2vec": {
+    "node_classification": {
+      "best_params": {
+        "dimensions": 256,
+        "walk_length": 79,
+        "num_walks": 10,
+        "p": 0.542506175575077,
+        "q": 1.7427953893722627,
+        "window": 11
+      },
+      "best_score": 0.27563743132114976
+    },
+    "link_prediction": {
+      "best_params": {
+        "dimensions": 256,
+        "walk_length": 63,
+        "num_walks": 12,
+        "p": 1.3153094698626138,
+        "q": 1.567523089032629,
+        "window": 9
+      },
+      "best_score": 0.5619286368274222
+    },
+    "node_ranking": {
+      "best_params": {
+        "dimensions": 256,
+        "walk_length": 69,
+        "num_walks": 6,
+        "p": 0.7561404251755784,
+        "q": 0.8402556534882427,
+        "window": 7
+      },
+      "best_score": 0.6238095238095238
+    }
+  },
+  "netmf": {
+    "node_classification": {
+      "best_params": {
+        "dimensions": 256,
+        "window_size": 11,
+        "negative": 6
+      },
+      "best_score": 0.3698460114126576
+    },
+    "link_prediction": {
+      "best_params": {
+        "dimensions": 64,
+        "window_size": 14,
+        "negative": 2
+      },
+      "best_score": 0.9618943141210347
+    },
+    "node_ranking": {
+      "best_params": {
+        "dimensions": 64,
+        "window_size": 8,
+        "negative": 8
+      },
+      "best_score": 0.6095238095238096
+    }
+  },
+  "graphsage": {
+    "node_classification": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 64,
+        "n_layers": 2,
+        "epochs": 100,
+        "lr": 0.01
+      },
+      "best_score": 0.4829276845823535
+    },
+    "link_prediction": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 64,
+        "n_layers": 2,
+        "epochs": 100,
+        "lr": 0.01
+      },
+      "best_score": 0.9098415606512772
+    },
+    "node_ranking": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 64,
+        "n_layers": 3,
+        "epochs": 200,
+        "lr": 0.001
+      },
+      "best_score": 0.6238095238095238
+    }
+  },
+  "appnp": {
+    "node_classification": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 32,
+        "n_layers": 3,
+        "alpha": 0.15979909127171077,
+        "K": 9,
+        "epochs": 300,
+        "lr": 0.01
+      },
+      "best_score": 0.4383524512941806
+    },
+    "link_prediction": {
+      "best_params": {
+        "dimensions": 64,
+        "hidden_dim": 128,
+        "n_layers": 3,
+        "alpha": 0.09184071141102151,
+        "K": 15,
+        "epochs": 300,
+        "lr": 0.001
+      },
+      "best_score": 0.5829234715874393
+    },
+    "node_ranking": {
+      "best_params": {
+        "dimensions": 64,
+        "hidden_dim": 128,
+        "n_layers": 3,
+        "alpha": 0.09184071141102151,
+        "K": 15,
+        "epochs": 300,
+        "lr": 0.001
+      },
+      "best_score": 0.638095238095238
+    }
+  },
+  "gat_baseline": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 4,
+        "lr": 0.0001,
+        "weight_decay": 0.0,
+        "dropout": 0.4,
+        "heads": 4,
+        "attn_dropout": 0.6,
+        "residual": true,
+        "epochs": 200
+      },
+      "best_score": 0.7124252456998662
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 4,
+        "lr": 0.001,
+        "weight_decay": 0.001,
+        "dropout": 0.0,
+        "heads": 2,
+        "attn_dropout": 0.4,
+        "residual": false,
+        "epochs": 300
+      },
+      "best_score": 0.9093807292187859
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 4,
+        "lr": 0.001,
+        "weight_decay": 0.001,
+        "dropout": 0.0,
+        "heads": 2,
+        "attn_dropout": 0.4,
+        "residual": false,
+        "epochs": 300
+      },
+      "best_score": 0.6285714285714286
+    }
+  },
+  "graphgps_baseline": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 3,
+        "lr": 0.0003,
+        "weight_decay": 1e-05,
+        "dropout": 0.0,
+        "num_heads": 2,
+        "pe_dim": 16,
+        "local_gnn": "gcn",
+        "epochs": 100
+      },
+      "best_score": 0.6384606274170914
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 4,
+        "lr": 0.001,
+        "weight_decay": 0.001,
+        "dropout": 0.0,
+        "num_heads": 2,
+        "pe_dim": 16,
+        "local_gnn": "gcn",
+        "epochs": 300
+      },
+      "best_score": 0.9560429317514337
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 4,
+        "lr": 0.001,
+        "weight_decay": 0.001,
+        "dropout": 0.0,
+        "num_heads": 2,
+        "pe_dim": 16,
+        "local_gnn": "gcn",
+        "epochs": 300
+      },
+      "best_score": 0.6047619047619047
+    }
+  }
+}

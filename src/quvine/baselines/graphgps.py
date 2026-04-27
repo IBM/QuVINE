@@ -53,6 +53,31 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# Import PyTorch utilities for better error handling
+try:
+    from ..utils.torch_utils import (
+        check_torch_available,
+        TorchNotAvailableError,
+        get_device
+    )
+    TORCH_UTILS_AVAILABLE = True
+except ImportError:
+    TORCH_UTILS_AVAILABLE = False
+    
+    # Fallback implementations
+    def check_torch_available():
+        try:
+            import torch
+            return True
+        except ImportError:
+            return False
+    
+    class TorchNotAvailableError(ImportError):
+        pass
+    
+    def get_device():
+        return "cpu"
+
 try:
     import torch
     import torch.nn as nn
@@ -132,10 +157,27 @@ SUPPORTED_GRAPHGPS_VARIANTS = (
 
 
 def _check_deps() -> None:
+    """
+    Check if required dependencies are available and raise informative errors if not.
+    
+    Raises:
+        TorchNotAvailableError: If PyTorch is not installed
+        ImportError: If PyTorch Geometric is not installed
+    """
     if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch is required. Install torch first.")
+        raise TorchNotAvailableError(
+            "PyTorch is required for GraphGPS embedding generation.\n"
+            "Install PyTorch with: pip install torch\n"
+            "See installation guide: https://pytorch.org/get-started/locally/\n"
+            "For CPU-only: pip install torch --index-url https://download.pytorch.org/whl/cpu"
+        )
     if not PYG_AVAILABLE:
-        raise ImportError("PyTorch Geometric is required. Install torch-geometric first.")
+        raise ImportError(
+            "PyTorch Geometric is required for GraphGPS.\n"
+            "Install with: pip install torch-geometric\n"
+            "See installation guide: https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html\n"
+            "Quick install: pip install torch-geometric torch-scatter torch-sparse"
+        )
 
 
 def set_seed(seed: int) -> None:
@@ -733,8 +775,9 @@ class PyGGraphGPS(nn.Module if nn is not None else object):
 
         for _ in range(config.num_layers):
             local_conv = self._make_local_conv(config)
-            self.layers.append(
-                GPSConv(
+            # Try to pass attn_dropout, but handle if PyG version doesn't support it
+            try:
+                gps_layer = GPSConv(
                     channels=config.hidden_dim,
                     conv=local_conv,
                     heads=config.heads,
@@ -743,7 +786,17 @@ class PyGGraphGPS(nn.Module if nn is not None else object):
                     act=config.activation,
                     attn_type=config.attn_type,
                 )
-            )
+            except TypeError:
+                # Fallback for older PyG versions without attn_dropout
+                gps_layer = GPSConv(
+                    channels=config.hidden_dim,
+                    conv=local_conv,
+                    heads=config.heads,
+                    dropout=config.dropout,
+                    act=config.activation,
+                    attn_type=config.attn_type,
+                )
+            self.layers.append(gps_layer)
             self.norms.append(
                 nn.LayerNorm(config.hidden_dim) if config.use_layer_norm else nn.Identity()
             )

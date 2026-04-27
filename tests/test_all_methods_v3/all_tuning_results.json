@@ -1,0 +1,121 @@
+{
+  "erdos_renyi": {
+    "quvine_walks": {
+      "best_params": {
+        "num_views": 2,
+        "max_degree": 45,
+        "degree_alpha": 0.49364981804232755,
+        "num_walks": 9,
+        "walk_length": 104,
+        "restart_prob": 0.12338512109369544,
+        "embedding_dim": 256,
+        "window": 6,
+        "negative": 10,
+        "epochs": 13
+      },
+      "best_score": 0.47122154004976746
+    },
+    "baseline_filter_heat": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 4.824531425369476,
+        "filter_order": 8
+      },
+      "best_score": 0.0
+    },
+    "baseline_filter_poly": {
+      "best_params": {
+        "embedding_dim": 256,
+        "filter_t": 3.981296002634664,
+        "filter_order": 9
+      },
+      "best_score": 0.0
+    },
+    "baseline_gcnmf": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 32,
+        "mf_dim": 128,
+        "gcnmf_layers": 3,
+        "epochs": 300,
+        "lr": 0.01,
+        "weight_decay": 0.0
+      },
+      "best_score": 0.576191665076408
+    },
+    "node2vec": {
+      "best_params": {
+        "dimensions": 256,
+        "walk_length": 79,
+        "num_walks": 10,
+        "p": 0.542506175575077,
+        "q": 1.7427953893722627,
+        "window": 11
+      },
+      "best_score": 0.43595016161649164
+    },
+    "netmf": {
+      "best_params": {
+        "dimensions": 256,
+        "window_size": 12,
+        "negative": 6
+      },
+      "best_score": 0.40828916933922627
+    },
+    "graphsage": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 64,
+        "n_layers": 2,
+        "epochs": 100,
+        "lr": 0.01
+      },
+      "best_score": 0.6615594800473624
+    },
+    "appnp": {
+      "best_params": {
+        "dimensions": 256,
+        "hidden_dim": 32,
+        "n_layers": 2,
+        "alpha": 0.0542506175575077,
+        "K": 13,
+        "epochs": 100,
+        "lr": 0.05
+      },
+      "best_score": 0.6041517652006948
+    },
+    "gat_baseline": {
+      "best_params": {
+        "embedding_dim": 256,
+        "hidden_dim": 64,
+        "num_layers": 3,
+        "lr": 0.0003,
+        "weight_decay": 1e-05,
+        "dropout": 0.0,
+        "heads": 2,
+        "attn_dropout": 0.4,
+        "concat_heads": "False",
+        "residual": "True",
+        "epochs": 200
+      },
+      "best_score": 0.0
+    },
+    "graphgps_baseline": {
+      "best_params": {
+        "embedding_dim": 128,
+        "hidden_dim": 256,
+        "num_layers": 2,
+        "lr": 0.003,
+        "weight_decay": 0.0,
+        "dropout": 0.6,
+        "gps_layers": 3,
+        "num_heads": 4,
+        "pe_dim": 32,
+        "attn_dropout": 0.4,
+        "local_gnn": "gat",
+        "epochs": 300
+      },
+      "best_score": 0.0
+    }
+  }
+}
