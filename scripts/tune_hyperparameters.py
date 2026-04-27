@@ -85,6 +85,7 @@ from quvine.embedding.word2vec import corpus_to_embedding
 from quvine.baselines.node2vec import run_node2vec
 from quvine.baselines.netmf import run_netmf
 from quvine.baselines.graphsage import run_graphsage
+from quvine.baselines.appnp import run_appnp
 from quvine.baselines.gcn_mf import (
     generate_baseline_gcnmf_embedding,
     generate_baseline_filter_embedding_wrapper,
@@ -143,15 +144,56 @@ SYNTHETIC_NETWORK_TYPES = [
     "real_polbooks",
 ]
 
+# Representative methods for tuning (tune these 8, reuse for all 39)
 ALL_METHODS = [
-    "quvine_walks",        # RWR + CTQW + DTQW walk embeddings
+    "quvine_walks",        # Representative for all 11 quvine_* methods
     "baseline_filter_heat",
     "baseline_filter_poly",
     "baseline_gcnmf",
     "node2vec",
     "netmf",
     "graphsage",
+    "appnp",
 ]
+
+# Full list of 39 methods (for reference and validation)
+ALL_39_METHODS = [
+    # Quantum walk-based (11 methods) - use quvine_walks params
+    "quvine_rwr", "quvine_ctqw", "quvine_dtqw",
+    "quvine_baseline_heat", "quvine_baseline_poly",
+    "quvine_rwr_heat", "quvine_rwr_poly",
+    "quvine_ctqw_heat", "quvine_ctqw_poly",
+    "quvine_dtqw_heat", "quvine_dtqw_poly",
+    # GAT variants (12 methods) - use gat_baseline params (not tuned here)
+    "gat_baseline", "gat_heat", "gat_poly",
+    "gat_rwr", "gat_ctqw", "gat_dtqw",
+    "gat_rwr_heat", "gat_rwr_poly",
+    "gat_ctqw_heat", "gat_ctqw_poly",
+    "gat_dtqw_heat", "gat_dtqw_poly",
+    # GraphGPS variants (12 methods) - use graphgps_baseline params (not tuned here)
+    "graphgps_baseline", "graphgps_heat", "graphgps_poly",
+    "graphgps_rwr", "graphgps_ctqw", "graphgps_dtqw",
+    "graphgps_rwr_heat", "graphgps_rwr_poly",
+    "graphgps_ctqw_heat", "graphgps_ctqw_poly",
+    "graphgps_dtqw_heat", "graphgps_dtqw_poly",
+    # Classical baselines (4 methods)
+    "node2vec", "netmf", "graphsage", "baseline_gcnmf",
+]
+
+# Method mapping: maps each of 39 methods to its tuning representative
+METHOD_TUNING_MAP = {
+    # All quvine methods use quvine_walks params
+    **{m: "quvine_walks" for m in ALL_39_METHODS if m.startswith("quvine_")},
+    # All GAT methods use gat_baseline params (default, not tuned)
+    **{m: "gat_baseline" for m in ALL_39_METHODS if m.startswith("gat_")},
+    # All GraphGPS methods use graphgps_baseline params (default, not tuned)
+    **{m: "graphgps_baseline" for m in ALL_39_METHODS if m.startswith("graphgps_")},
+    # Classical methods tune individually
+    "node2vec": "node2vec",
+    "netmf": "netmf",
+    "graphsage": "graphsage",
+    "baseline_gcnmf": "baseline_gcnmf",
+}
 
 # ── Graph generation ─────────────────────────────────────────────────────────
 
@@ -484,6 +526,28 @@ def run_graphsage_embedding(
     return {"graphsage": Z}
 
 
+def run_appnp_embedding(
+    G: nx.Graph, params: Dict[str, Any], seed: int = 42
+) -> Dict[str, np.ndarray]:
+    """Run APPNP embedding."""
+    nodes = list(G.nodes())
+    Z = run_appnp(
+        graph=G,
+        nodes=nodes,
+        dimensions=params.get("dimensions", 64),
+        hidden_dim=params.get("hidden_dim", 64),
+        n_layers=params.get("n_layers", 2),
+        alpha=params.get("alpha", 0.1),
+        K=params.get("K", 10),
+        dropout=params.get("dropout", 0.5),
+        epochs=params.get("epochs", 200),
+        lr=params.get("lr", 0.01),
+        weight_decay=params.get("weight_decay", 5e-4),
+        seed=seed,
+    )
+    return {"appnp": Z}
+
+
 # ── Evaluation ───────────────────────────────────────────────────────────────
 
 def _nc_score(G: nx.Graph, Z: np.ndarray, node_list: List, seed: int) -> float:
@@ -585,6 +649,7 @@ def evaluate_on_graphs(
         "node2vec":             run_node2vec_embedding,
         "netmf":                run_netmf_embedding,
         "graphsage":            run_graphsage_embedding,
+        "appnp":                run_appnp_embedding,
     }
     runner = RUNNERS[method]
 
@@ -686,6 +751,20 @@ def suggest_graphsage(trial: Any) -> Dict[str, Any]:
     }
 
 
+def suggest_appnp(trial: Any) -> Dict[str, Any]:
+    return {
+        "dimensions":  trial.suggest_categorical("dimensions", [32, 64, 128]),
+        "hidden_dim":  trial.suggest_categorical("hidden_dim", [32, 64, 128]),
+        "n_layers":    trial.suggest_int("n_layers", 1, 3),
+        "alpha":       trial.suggest_float("alpha", 0.05, 0.3),
+        "K":           trial.suggest_int("K", 5, 20),
+        "dropout":     trial.suggest_float("dropout", 0.3, 0.7),
+        "epochs":      trial.suggest_categorical("epochs", [100, 200, 300]),
+        "lr":          trial.suggest_float("lr", 1e-4, 0.1, log=True),
+        "weight_decay":trial.suggest_float("weight_decay", 1e-5, 1e-2, log=True),
+    }
+
+
 SUGGESTERS = {
     "quvine_walks":         suggest_quvine_walks,
     "baseline_filter_heat": suggest_filter_heat,
@@ -694,6 +773,7 @@ SUGGESTERS = {
     "node2vec":             suggest_node2vec,
     "netmf":                suggest_netmf,
     "graphsage":            suggest_graphsage,
+    "appnp":                suggest_appnp,
 }
 
 # Default params (used as the first trial / fallback best)
@@ -725,6 +805,11 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "graphsage": {
         "dimensions": 64, "hidden_dim": 128, "n_layers": 2,
         "epochs": 50, "lr": 0.01, "neg_samples": 5,
+    },
+    "appnp": {
+        "dimensions": 64, "hidden_dim": 64, "n_layers": 2,
+        "alpha": 0.1, "K": 10, "dropout": 0.5,
+        "epochs": 200, "lr": 0.01, "weight_decay": 5e-4,
     },
 }
 
@@ -895,7 +980,7 @@ def main():
                         help="Directory for output files")
     parser.add_argument("--n-trials", type=int, default=30,
                         help="Number of Optuna trials per method per network type")
-    parser.add_argument("--pilot-nodes", type=int, default=100,
+    parser.add_argument("--pilot-nodes", type=int, default=200,
                         help="Number of nodes in pilot graphs (synthetic + subsampled real)")
     parser.add_argument("--pilot-seeds", type=int, default=3,
                         help="Number of random graph instances for stochasticity")

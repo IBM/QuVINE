@@ -32,7 +32,7 @@
 #   --max-nodes N        Max nodes per network (default: 4000)
 #   --n-reps N           Replicates per run    (default: 30)
 #   --n-trials N         Optuna trials         (default: 30)
-#   --pilot-nodes N      Tuning pilot nodes    (default: 150)
+#   --pilot-nodes N      Tuning pilot nodes    (default: 200)
 #   --methods M          Comma-separated list  (default: all 15)
 #   --python-env PATH    Path to venv activate
 #   --dry-run            Print jobs, don't submit
@@ -52,14 +52,21 @@ MEMORY="16"
 MAX_NODES="4000"
 N_REPS="30"
 N_TRIALS="30"
-PILOT_NODES="150"
+PILOT_NODES="200"
 DRY_RUN=false
 SKIP_TUNING=false
 SKIP_RANKING=false
 SKIP_CLASSIFICATION=false
 SKIP_LINK_PREDICTION=false
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
-METHODS="quvine_rwr,quvine_ctqw,quvine_dtqw,quvine_baseline_heat,quvine_baseline_poly,quvine_rwr_heat,quvine_rwr_poly,quvine_ctqw_heat,quvine_ctqw_poly,gat_baseline,gat_heat,gat_poly,gat_rwr,gat_ctqw,gat_dtqw,gat_rwr_heat,gat_rwr_poly,gat_ctqw_heat,gat_ctqw_poly,gat_dtqw_heat,gat_dtqw_poly,graphgps_baseline,graphgps_heat,graphgps_poly,graphgps_rwr,graphgps_ctqw,graphgps_dtqw,graphgps_rwr_heat,graphgps_rwr_poly,graphgps_ctqw_heat,graphgps_ctqw_poly,graphgps_dtqw_heat,graphgps_dtqw_poly,node2vec,netmf,graphsage,appnp,baseline_filter,baseline_gcnmf"
+# All 39 methods for analysis
+ALL_METHODS="quvine_rwr,quvine_ctqw,quvine_dtqw,quvine_baseline_heat,quvine_baseline_poly,quvine_rwr_heat,quvine_rwr_poly,quvine_ctqw_heat,quvine_ctqw_poly,quvine_dtqw_heat,quvine_dtqw_poly,gat_baseline,gat_heat,gat_poly,gat_rwr,gat_ctqw,gat_dtqw,gat_rwr_heat,gat_rwr_poly,gat_ctqw_heat,gat_ctqw_poly,gat_dtqw_heat,gat_dtqw_poly,graphgps_baseline,graphgps_heat,graphgps_poly,graphgps_rwr,graphgps_ctqw,graphgps_dtqw,graphgps_rwr_heat,graphgps_rwr_poly,graphgps_ctqw_heat,graphgps_ctqw_poly,graphgps_dtqw_heat,graphgps_dtqw_poly,node2vec,netmf,graphsage,baseline_gcnmf"
+
+# Representative methods for tuning (tune these 8, reuse params for all 39)
+TUNE_METHODS="quvine_walks,baseline_filter_heat,baseline_filter_poly,baseline_gcnmf,node2vec,netmf,graphsage,appnp"
+
+# Default to all methods for analysis
+METHODS="$ALL_METHODS"
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -104,6 +111,7 @@ mkdir -p "$LOG_DIR" "$RESULTS_DIR" "$HPARAM_DIR" "$AGG_DIR"
 
 # Space-separated methods for tune_hyperparameters.py (which uses nargs="*")
 METHODS_SPACE="${METHODS//,/ }"
+TUNE_METHODS_SPACE="${TUNE_METHODS//,/ }"
 
 # ── Network and disease definitions ───────────────────────────────────────────
 NETWORKS=(BioPlex3 HumanNet STRING ProteomeHD PCNet)
@@ -210,7 +218,7 @@ python scripts/tune_hyperparameters.py \\
     --n-trials     ${N_TRIALS} \\
     --pilot-nodes  ${PILOT_NODES} \\
     --pilot-seeds  3 \\
-    --methods      ${METHODS_SPACE}
+    --methods      ${TUNE_METHODS_SPACE}
 
 echo "======================================"
 echo " Finished: ${NET}  at \$(date)"

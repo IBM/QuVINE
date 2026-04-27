@@ -51,7 +51,14 @@ WALLTIME="120:00"
 TUNE_WALLTIME="48:00"
 MEMORY="8"
 N_TRIALS=30
-METHODS="quvine_rwr,quvine_ctqw,quvine_dtqw,quvine_baseline_heat,quvine_baseline_poly,quvine_rwr_heat,quvine_rwr_poly,quvine_ctqw_heat,quvine_ctqw_poly,gat_baseline,gat_heat,gat_poly,gat_rwr,gat_ctqw,gat_dtqw,gat_rwr_heat,gat_rwr_poly,gat_ctqw_heat,gat_ctqw_poly,gat_dtqw_heat,gat_dtqw_poly,graphgps_baseline,graphgps_heat,graphgps_poly,graphgps_rwr,graphgps_ctqw,graphgps_dtqw,graphgps_rwr_heat,graphgps_rwr_poly,graphgps_ctqw_heat,graphgps_ctqw_poly,graphgps_dtqw_heat,graphgps_dtqw_poly,node2vec,netmf,graphsage,appnp,baseline_filter,baseline_gcnmf"
+# All 39 methods for analysis (used in analysis jobs)
+ALL_METHODS="quvine_rwr,quvine_ctqw,quvine_dtqw,quvine_baseline_heat,quvine_baseline_poly,quvine_rwr_heat,quvine_rwr_poly,quvine_ctqw_heat,quvine_ctqw_poly,quvine_dtqw_heat,quvine_dtqw_poly,gat_baseline,gat_heat,gat_poly,gat_rwr,gat_ctqw,gat_dtqw,gat_rwr_heat,gat_rwr_poly,gat_ctqw_heat,gat_ctqw_poly,gat_dtqw_heat,gat_dtqw_poly,graphgps_baseline,graphgps_heat,graphgps_poly,graphgps_rwr,graphgps_ctqw,graphgps_dtqw,graphgps_rwr_heat,graphgps_rwr_poly,graphgps_ctqw_heat,graphgps_ctqw_poly,graphgps_dtqw_heat,graphgps_dtqw_poly,node2vec,netmf,graphsage,baseline_gcnmf"
+
+# Representative methods for tuning (tune these 8, reuse params for all 39)
+TUNE_METHODS="quvine_walks,baseline_filter_heat,baseline_filter_poly,baseline_gcnmf,node2vec,netmf,graphsage,appnp"
+
+# Default to all methods for analysis
+METHODS="$ALL_METHODS"
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/python"
 RESUME=false
 DRY_RUN=false
@@ -288,6 +295,7 @@ cd ${PROJECT_DIR}
 ${PYTHON_ENV} scripts/tune_hyperparameters.py \
     --output-dir  ${HPARAM_DIR}/hn_${CASE_NAME} \
     --network-type ${TUNER_TYPE} \
+    --methods     ${TUNE_METHODS} \
     --n-trials    ${N_TRIALS} \
     --skip-real
 
@@ -330,6 +338,7 @@ cd ${PROJECT_DIR}
 ${PYTHON_ENV} scripts/tune_hyperparameters.py \
     --output-dir  ${HPARAM_DIR}/eg_${EG_TYPE} \
     --network-type ${PROXY_TYPE} \
+    --methods     ${TUNE_METHODS} \
     --n-trials    ${N_TRIALS} \
     --skip-real
 
