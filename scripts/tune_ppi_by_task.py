@@ -645,10 +645,25 @@ def suggest_params_from_config(trial, method: str, config: Dict[str, Any]) -> Di
 
 
 def get_n_trials_for_method(method: str, config: Dict[str, Any], override_trials: Optional[int] = None) -> int:
-    """Get the number of trials for a method based on configuration."""
+    """
+    Get the number of trials for a method based on configuration.
+    
+    Priority:
+    1. override_trials (command line argument)
+    2. method's hyperparameters n_trials
+    3. optuna adaptive_trials config
+    4. optuna base_trials (default: 50)
+    """
     if override_trials is not None:
         return override_trials
     
+    # Check if method has n_trials in its hyperparameters
+    if method in config.get('hyperparameters', {}):
+        method_config = config['hyperparameters'][method]
+        if 'n_trials' in method_config:
+            return method_config['n_trials']
+    
+    # Fall back to optuna config
     optuna_config = config.get('optuna', {})
     
     if optuna_config.get('adaptive_trials', False):
