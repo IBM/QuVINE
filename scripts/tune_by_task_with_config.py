@@ -63,6 +63,11 @@ from quvine.data.random_graphs import (
     generate_stochastic_block_model,
     generate_random_geometric,
     generate_core_periphery,
+    generate_random_regular_expander_like,
+    generate_heterophilic_sbm,
+    generate_degree_corrected_sbm,
+    generate_grid_torus_lattice,
+    generate_configuration_model_graph,
 )
 from quvine.views.generator import ViewBuilder
 from quvine.corpus.builder import CorpusBuilder
@@ -210,6 +215,87 @@ def generate_pilot_graph(network_type: str, config: Dict[str, Any], seed: int = 
                      [0.05, 0.05, 0.5, 0.05],
                      [0.05, 0.05, 0.05, 0.5]],
             seed=seed,
+        )
+    
+    elif network_type == "random_regular":
+        # Random regular expander-like graph
+        if n_nodes < 100:
+            d = 4
+        elif n_nodes < 1000:
+            d = 6
+        else:
+            d = 8
+        # Ensure n*d is even
+        if (n_nodes * d) % 2 != 0:
+            d += 1
+        G = generate_random_regular_expander_like(n_nodes, d=d, seed=seed)
+    
+    elif network_type == "heterophilic_sbm":
+        # Heterophilic stochastic block model
+        if n_nodes < 100:
+            n_blocks = 2
+            target_avg_degree = 4.0
+        elif n_nodes < 1000:
+            n_blocks = 4
+            target_avg_degree = 8.0
+        else:
+            n_blocks = 6
+            target_avg_degree = 12.0
+        out_in_ratio = 2.0  # Heterophilic
+        G, labels = generate_heterophilic_sbm(
+            n=n_nodes,
+            n_blocks=n_blocks,
+            target_avg_degree=target_avg_degree,
+            out_in_ratio=out_in_ratio,
+            seed=seed
+        )
+    
+    elif network_type == "degree_corrected_sbm":
+        # Degree-corrected SBM with power-law degree distribution
+        if n_nodes < 100:
+            n_blocks = 2
+            target_avg_degree = 4.0
+        elif n_nodes < 1000:
+            n_blocks = 4
+            target_avg_degree = 8.0
+        else:
+            n_blocks = 6
+            target_avg_degree = 12.0
+        out_in_ratio = 0.5  # Assortative
+        G, labels = generate_degree_corrected_sbm(
+            n=n_nodes,
+            n_blocks=n_blocks,
+            target_avg_degree=target_avg_degree,
+            out_in_ratio=out_in_ratio,
+            degree_distribution='powerlaw',
+            seed=seed
+        )
+    
+    elif network_type == "grid_torus":
+        # Grid/torus lattice
+        periodic = True
+        add_diagonals = (seed % 2 == 0)  # Vary diagonals based on seed
+        G = generate_grid_torus_lattice(
+            n=n_nodes,
+            periodic=periodic,
+            add_diagonals=add_diagonals,
+            seed=seed
+        )
+    
+    elif network_type == "configuration_model":
+        # Configuration model with power-law degree distribution
+        if n_nodes < 100:
+            target_avg_degree = 4.0
+        elif n_nodes < 1000:
+            target_avg_degree = 8.0
+        else:
+            target_avg_degree = 12.0
+        G = generate_configuration_model_graph(
+            n=n_nodes,
+            distribution='powerlaw',
+            target_avg_degree=target_avg_degree,
+            gamma=2.5,
+            seed=seed
         )
     
     else:
@@ -732,6 +818,8 @@ def main():
                             'random_geometric', 'modular_strong', 'modular_medium',
                             'modular_many_communities', 'core_periphery',
                             'scale_free', 'powerlaw_cluster', 'stochastic_block_model',
+                            'random_regular', 'heterophilic_sbm', 'degree_corrected_sbm',
+                            'grid_torus', 'configuration_model',
                             'all'
                         ],
                         default=None, help='Network type to tune (overrides config)')
@@ -754,12 +842,14 @@ def main():
     # Override config with command-line arguments
     if args.network_type is not None:
         if args.network_type == 'all':
-            # Use all available network types
+            # Use all available network types (11 + 5 extended = 16 total)
             network_types = [
                 'erdos_renyi', 'watts_strogatz_high_p', 'watts_strogatz_low_p',
                 'random_geometric', 'modular_strong', 'modular_medium',
                 'modular_many_communities', 'core_periphery', 'scale_free',
-                'powerlaw_cluster', 'stochastic_block_model'
+                'powerlaw_cluster', 'stochastic_block_model',
+                'random_regular', 'heterophilic_sbm', 'degree_corrected_sbm',
+                'grid_torus', 'configuration_model'
             ]
         else:
             network_types = [args.network_type]

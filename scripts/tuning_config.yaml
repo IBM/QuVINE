@@ -178,8 +178,9 @@ optuna:
 # ============================================================================
 experiment:
   n_graphs: 10  # Number of graphs to average over
-  # All available network types from random_graphs.py
+  # All available network types from random_graphs.py (11 + 5 extended = 16 total)
   network_types: [
+    # Original 11 network types
     "erdos_renyi",
     "watts_strogatz_high_p",
     "watts_strogatz_low_p",
@@ -190,7 +191,13 @@ experiment:
     "core_periphery",
     "scale_free",
     "powerlaw_cluster",
-    "stochastic_block_model"
+    "stochastic_block_model",
+    # Extended 5 network types
+    "random_regular",
+    "heterophilic_sbm",
+    "degree_corrected_sbm",
+    "grid_torus",
+    "configuration_model"
   ]
   output_dir: "tuning_by_task"
   log_level: "INFO"

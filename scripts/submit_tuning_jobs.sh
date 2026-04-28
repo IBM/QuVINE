@@ -70,8 +70,9 @@ METHODS=(
 )
 
 # Network types to tune on (default, can be overridden with --networks)
-# All available network types from random_graphs.py
+# All available network types from random_graphs.py (11 + 5 extended = 16 total)
 NETWORK_TYPES=(
+    # Original 11 network types
     "erdos_renyi"
     "watts_strogatz_high_p"
     "watts_strogatz_low_p"
@@ -83,6 +84,12 @@ NETWORK_TYPES=(
     "scale_free"
     "powerlaw_cluster"
     "stochastic_block_model"
+    # Extended 5 network types
+    "random_regular"
+    "heterophilic_sbm"
+    "degree_corrected_sbm"
+    "grid_torus"
+    "configuration_model"
 )
 
 # ---------------------------------------------------------------------------
