@@ -725,7 +725,15 @@ def main():
     default_config = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tuning_config.yaml')
     parser.add_argument('--config', type=str, default=default_config,
                         help='Path to YAML configuration file')
-    parser.add_argument('--network-type', type=str, choices=['erdos_renyi', 'modular', 'all'],
+    parser.add_argument('--network-type', type=str,
+                        choices=[
+                            'erdos_renyi', 'modular',
+                            'watts_strogatz_high_p', 'watts_strogatz_low_p',
+                            'random_geometric', 'modular_strong', 'modular_medium',
+                            'modular_many_communities', 'core_periphery',
+                            'scale_free', 'powerlaw_cluster', 'stochastic_block_model',
+                            'all'
+                        ],
                         default=None, help='Network type to tune (overrides config)')
     parser.add_argument('--methods', nargs='+', default=None,
                         help='Methods to tune (overrides config)')
@@ -745,7 +753,16 @@ def main():
     
     # Override config with command-line arguments
     if args.network_type is not None:
-        network_types = ['erdos_renyi', 'modular'] if args.network_type == 'all' else [args.network_type]
+        if args.network_type == 'all':
+            # Use all available network types
+            network_types = [
+                'erdos_renyi', 'watts_strogatz_high_p', 'watts_strogatz_low_p',
+                'random_geometric', 'modular_strong', 'modular_medium',
+                'modular_many_communities', 'core_periphery', 'scale_free',
+                'powerlaw_cluster', 'stochastic_block_model'
+            ]
+        else:
+            network_types = [args.network_type]
     else:
         network_types = config['experiment']['network_types']
     
