@@ -1,0 +1,297 @@
+# Unified Hyperparameter Tuning Configuration
+# Works for BOTH PPI networks and synthetic networks
+# 
+# 12 Methods Total:
+# - 3 QuVINE quantum walk variants (rwr, ctqw, dtqw)
+# - 2 Classical filter baselines (heat, poly)
+# - 1 Classical GCN-MF baseline
+# - 2 GNN baselines with quantum calibration (GAT, GraphGPS)
+# - 4 Classical GNN/embedding baselines (node2vec, netmf, graphsage, appnp)
+
+# ============================================================================
+# FIXED PARAMETERS
+# ============================================================================
+fixed_params:
+  # Graph settings (for synthetic networks)
+  graph:
+    n_nodes: 200
+  
+  # PPI subsampling settings
+  ppi:
+    n_nodes: 200
+    radius: 2
+    degree_matched_fill: true
+    degree_matched_trim: true
+  
+  # Evaluation settings (same for all network types)
+  evaluation:
+    node_classification:
+      test_size: 0.3
+      n_label_strategies: 7
+      metric: "f1_macro"
+    
+    link_prediction:
+      test_ratio: 0.2
+      edge_feature_method: "hadamard"
+      metric: "auc_roc"
+    
+    node_ranking:
+      k_hops: 2  # For synthetic networks
+      top_k: 50
+      metric: "recall_at_50"
+  
+  # Training settings
+  training:
+    random_seed: 42
+    device: "cpu"
+
+# ============================================================================
+# HYPERPARAMETER SEARCH SPACES (12 Methods)
+# ============================================================================
+hyperparameters:
+  
+  # --------------------------------------------------------------------------
+  # QuVINE Quantum Walk Variants (3 methods)
+  # These need separate tuning due to different quantum walk mechanisms
+  # --------------------------------------------------------------------------
+  quvine_rwr:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    restart_prob: [0.1, 0.15, 0.2, 0.3]
+    max_degree: [50, 100, 200]
+    degree_alpha: [0.3, 0.5, 0.7]
+  
+  quvine_ctqw:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    tau: [0.5, 1.0, 2.0, 5.0]  # CTQW time parameter
+    max_degree: [50, 100, 200]
+    degree_alpha: [0.3, 0.5, 0.7]
+  
+  quvine_dtqw:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    steps: [10, 20, 40]  # DTQW steps
+    max_degree: [50, 100, 200]
+    degree_alpha: [0.3, 0.5, 0.7]
+  
+  # --------------------------------------------------------------------------
+  # Classical Filter Baselines (2 methods)
+  # --------------------------------------------------------------------------
+  baseline_filter_heat:
+    embedding_dim: [64, 128, 256]
+    tau: [0.5, 1.0, 2.0, 5.0, 10.0]
+    filter_order: [3, 4, 5, 6, 8]
+  
+  baseline_filter_poly:
+    embedding_dim: [64, 128, 256]
+    filter_order: [3, 4, 5, 6, 8, 10]
+    alpha: [0.1, 0.3, 0.5, 0.7]
+  
+  # --------------------------------------------------------------------------
+  # Classical GCN-MF Baseline (1 method)
+  # --------------------------------------------------------------------------
+  baseline_gcnmf:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    mf_dim: [32, 64, 128]
+    n_layers: [2, 3, 4]
+    epochs: [100, 200, 300]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+  
+  # --------------------------------------------------------------------------
+  # GNN Baselines with Quantum Calibration (2 methods)
+  # These use baseline hyperparameters + quantum calibration on top
+  # --------------------------------------------------------------------------
+  gat_baseline:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    n_layers: [2, 3, 4]
+    n_heads: [1, 2, 4, 8]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    attn_dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    epochs: [50, 100, 200]
+  
+  graphgps_baseline:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    n_layers: [2, 3, 4, 6]
+    n_heads: [1, 2, 4, 8]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    attn_dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    epochs: [50, 100, 200]
+    mpnn_type: ["gine", "gcn", "gin"]
+    global_model_type: ["Transformer", "Performer"]
+  
+  # --------------------------------------------------------------------------
+  # Classical GNN/Embedding Baselines (4 methods)
+  # --------------------------------------------------------------------------
+  node2vec:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 80]
+    num_walks: [20, 40, 80]
+    p: [0.5, 1.0, 2.0, 4.0]
+    q: [0.5, 1.0, 2.0, 4.0]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [5, 10, 20]
+  
+  netmf:
+    embedding_dim: [64, 128, 256]
+    window_size: [5, 10, 15, 20]
+    rank: [64, 128, 256, 512]
+    negative_samples: [5, 10, 20]
+  
+  graphsage:
+    embedding_dim: [64, 128, 256]
+    n_layers: [2, 3, 4]
+    hidden_dim: [64, 128, 256]
+    aggregator: ["mean", "gcn", "pool"]
+    dropout: [0.0, 0.1, 0.3]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    epochs: [50, 100, 200]
+    batch_size: [32, 64, 128]
+  
+  appnp:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    n_layers: [2, 3, 4]
+    alpha: [0.05, 0.1, 0.15, 0.2]
+    k_hops: [5, 10, 15, 20]
+    dropout: [0.0, 0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    epochs: [50, 100, 200]
+
+# ============================================================================
+# OPTUNA SETTINGS
+# ============================================================================
+optuna:
+  adaptive_trials: true
+  base_trials: 50
+  n_startup_trials: 10
+  sampler: "TPE"
+  pruner: "MedianPruner"
+  pruner_params:
+    n_startup_trials: 5
+    n_warmup_steps: 10
+    interval_steps: 1
+  
+  # Method-specific trial counts (optimized for <5 hour jobs)
+  method_trials:
+    # QuVINE quantum walks (3 methods)
+    quvine_rwr: 40
+    quvine_ctqw: 40
+    quvine_dtqw: 40
+    
+    # Classical filters (2 methods)
+    baseline_filter_heat: 30
+    baseline_filter_poly: 40
+    
+    # Classical GCN-MF (1 method)
+    baseline_gcnmf: 40
+    
+    # GNNs with quantum calibration (2 methods)
+    gat_baseline: 50
+    graphgps_baseline: 50
+    
+    # Classical GNN/embedding baselines (4 methods)
+    node2vec: 50
+    netmf: 30
+    graphsage: 40
+    appnp: 50
+
+# ============================================================================
+# EXPERIMENT SETTINGS
+# ============================================================================
+experiment:
+  # For synthetic networks
+  n_graphs: 10
+  network_types: [
+    "erdos_renyi",
+    "modular",
+    "watts_strogatz_high_p",
+    "watts_strogatz_low_p",
+    "random_geometric",
+    "modular_strong",
+    "modular_medium",
+    "modular_many_communities",
+    "core_periphery",
+    "scale_free",
+    "powerlaw_cluster",
+    "stochastic_block_model",
+    "random_regular",
+    "heterophilic_sbm",
+    "degree_corrected_sbm",
+    "grid_torus"
+  ]
+  
+  # For PPI networks
+  ppi_networks: ["STRING", "BioPlex3", "HumanNet", "PCNet", "ProteomeHD"]
+  diseases: ["asthma", "autism", "schizophrenia"]
+  n_replicates: 3
+  
+  # Common settings
+  output_dir: "tuning_by_task"
+  log_level: "INFO"
+  save_study: true
+  parallel_jobs: 1
+
+# ============================================================================
+# METHOD SELECTION
+# ============================================================================
+methods:
+  quantum_walks:
+    - quvine_rwr
+    - quvine_ctqw
+    - quvine_dtqw
+  
+  classical_filters:
+    - baseline_filter_heat
+    - baseline_filter_poly
+    - baseline_gcnmf
+  
+  gnns_with_quantum:
+    - gat_baseline
+    - graphgps_baseline
+  
+  classical_gnns:
+    - node2vec
+    - netmf
+    - graphsage
+    - appnp
+  
+  # All 12 methods
+  all:
+    - quvine_rwr
+    - quvine_ctqw
+    - quvine_dtqw
+    - baseline_filter_heat
+    - baseline_filter_poly
+    - baseline_gcnmf
+    - gat_baseline
+    - graphgps_baseline
+    - node2vec
+    - netmf
+    - graphsage
+    - appnp
+
+# Made with Bob

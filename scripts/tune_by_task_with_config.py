@@ -2,10 +2,10 @@
 """
 Task-Specific Hyperparameter Tuning Script with YAML Configuration
 
-Reads hyperparameter search spaces and fixed parameters from tuning_config.yaml
+Reads hyperparameter search spaces and fixed parameters from unified_tuning_config.yaml
 Tunes hyperparameters separately for each task:
 - node_classification
-- link_prediction  
+- link_prediction
 - node_ranking
 
 Output JSON structure:
@@ -18,14 +18,14 @@ Output JSON structure:
 }
 
 Usage:
-    # Use config file (default: tuning_config.yaml)
-    python scripts/tune_by_task_with_config.py --config tuning_config.yaml
+    # Use config file (default: unified_tuning_config.yaml)
+    python scripts/tune_by_task_with_config.py --config unified_tuning_config.yaml
     
     # Override specific settings
-    python scripts/tune_by_task_with_config.py --config tuning_config.yaml --n-trials 100
+    python scripts/tune_by_task_with_config.py --config unified_tuning_config.yaml --n-trials 100
     
     # Test with specific methods
-    python scripts/tune_by_task_with_config.py --methods quvine_walks node2vec --n-trials 5
+    python scripts/tune_by_task_with_config.py --methods quvine_rwr node2vec --n-trials 5
 """
 
 import argparse
@@ -307,8 +307,13 @@ def generate_pilot_graph(network_type: str, config: Dict[str, Any], seed: int = 
     return G
 
 
-def make_quvine_cfg(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Create QuVINE configuration from parameters."""
+def make_quvine_cfg(params: Dict[str, Any], walk_type: str = 'rwr') -> Dict[str, Any]:
+    """Create QuVINE configuration from parameters.
+    
+    Args:
+        params: Hyperparameter dictionary
+        walk_type: Type of quantum walk ('rwr', 'ctqw', or 'dtqw')
+    """
     return {
         "views": {
             "num_views": params.get("num_views", 3),
@@ -320,7 +325,7 @@ def make_quvine_cfg(params: Dict[str, Any]) -> Dict[str, Any]:
             "degree_alpha": params.get("degree_alpha", 0.5),
         },
         "walks": {
-            "kinds": ["rwr"],
+            "kinds": [walk_type],  # Use specified walk type
             "num_walks": params.get("num_walks", 10),
             "walk_length": params.get("walk_length", 80),
             "restart_prob": params.get("restart_prob", 0.15),
@@ -341,12 +346,19 @@ def make_quvine_cfg(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> np.ndarray:
-    """Run QuVINE walks method."""
+def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk_type: str = 'rwr') -> np.ndarray:
+    """Run QuVINE walks method with specified walk type.
+    
+    Args:
+        G: NetworkX graph
+        seeds: List of seed nodes
+        params: Hyperparameter dictionary
+        walk_type: Type of quantum walk ('rwr', 'ctqw', or 'dtqw')
+    """
     from types import SimpleNamespace
     from quvine.walks.base import BaseWalker
     
-    cfg_dict = make_quvine_cfg(params)
+    cfg_dict = make_quvine_cfg(params, walk_type)
     
     # Convert dict to nested namespace for ViewBuilder and Walker
     def dict_to_namespace(d):
@@ -586,8 +598,14 @@ def suggest_params_from_config(trial, method: str, config: Dict[str, Any]) -> Di
 def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> Optional[np.ndarray]:
     """Generate embedding for a method with given parameters."""
     try:
-        if method == "quvine_walks":
-            return run_quvine_walks(G, seeds, params)
+        # Quantum walk variants (split from quvine_walks)
+        if method == "quvine_rwr":
+            return run_quvine_walks(G, seeds, params, walk_type='rwr')
+        elif method == "quvine_ctqw":
+            return run_quvine_walks(G, seeds, params, walk_type='ctqw')
+        elif method == "quvine_dtqw":
+            return run_quvine_walks(G, seeds, params, walk_type='dtqw')
+        # Filter baselines
         elif method == "baseline_filter_heat":
             return run_filter_embedding(G, seeds, params, "heat")
         elif method == "baseline_filter_poly":
@@ -807,8 +825,8 @@ def tune_method_for_task(
 
 def main():
     parser = argparse.ArgumentParser(description='Task-specific hyperparameter tuning with config file')
-    # Default to tuning_config.yaml in the same directory as this script
-    default_config = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tuning_config.yaml')
+    # Default to unified_tuning_config.yaml in the same directory as this script
+    default_config = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'unified_tuning_config.yaml')
     parser.add_argument('--config', type=str, default=default_config,
                         help='Path to YAML configuration file')
     parser.add_argument('--network-type', type=str,

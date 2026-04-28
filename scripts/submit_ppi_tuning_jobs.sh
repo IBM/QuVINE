@@ -6,7 +6,7 @@
 #   Submits one job per method × network × disease combination.
 #   Each job tunes hyperparameters for all 3 tasks (node_classification,
 #   link_prediction, node_ranking) for a single method on a single network-disease pair.
-#   Total jobs: N_METHODS × N_NETWORKS × N_DISEASES (default: 13 × 5 × 3 = 195 jobs)
+#   Total jobs: N_METHODS × N_NETWORKS × N_DISEASES (default: 12 × 5 × 3 = 180 jobs)
 #
 # SERIAL MODE (--serial flag):
 #   Submits one job per network × disease, processing all methods sequentially.
@@ -14,19 +14,19 @@
 #
 # Networks: STRING, BioPlex3, HumanNet, PCNet, ProteomeHD (5 networks)
 # Diseases: asthma, autism, schizophrenia (3 diseases)
-# Methods: 13 embedding methods (8 quantum + 5 classical)
+# Methods: 12 unified embedding methods (3 quantum walks + 9 baselines)
 #
 # Usage:
-#   # Parallel mode (default) - 195 jobs (13 methods × 5 networks × 3 diseases)
+#   # Parallel mode (default) - 180 jobs (12 methods × 5 networks × 3 diseases)
 #   bash scripts/submit_ppi_tuning_jobs.sh
 #
 #   # Serial mode - 15 jobs (5 networks × 3 diseases, all methods sequential)
 #   bash scripts/submit_ppi_tuning_jobs.sh --serial
 #
-#   # Tune only on STRING network - 39 jobs (13 methods × 3 diseases)
+#   # Tune only on STRING network - 36 jobs (12 methods × 3 diseases)
 #   bash scripts/submit_ppi_tuning_jobs.sh --networks STRING
 #
-#   # Tune on specific network-disease pairs - 13 jobs
+#   # Tune on specific network-disease pairs - 12 jobs
 #   bash scripts/submit_ppi_tuning_jobs.sh --networks STRING --diseases asthma
 #
 #   # With options
@@ -36,14 +36,14 @@
 # Options:
 #   --networks NET1,NET2,...  Networks to tune (default: all 5)
 #   --diseases DIS1,DIS2,...  Diseases to tune (default: all 3)
-#   --methods MET1,MET2,...   Methods to tune (default: all 13)
+#   --methods MET1,MET2,...   Methods to tune (default: all 12)
 #   --serial                  Run all methods in one job per network-disease (default: parallel)
 #   --queue QUEUE             LSF queue name (default: normal)
 #   --walltime TIME           Wall time limit (default: 72:00)
 #   --memory MEM              Memory in GB (default: 32)
 #   --n-replicates N          Number of subsampling replicates (default: 3)
 #   --n-trials N              Number of Optuna trials per method (default: from config)
-#   --config FILE             Config file path (default: scripts/ppi_tuning_config.yaml)
+#   --config FILE             Config file path (default: scripts/unified_tuning_config.yaml)
 #   --dry-run                 Show what would be submitted without submitting
 #
 ################################################################################
@@ -61,23 +61,22 @@ N_TRIALS=""  # Empty means use config defaults
 DRY_RUN=false
 SERIAL_MODE=false  # Default: parallel (one job per method × network × disease)
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
-CONFIG_FILE="scripts/ppi_tuning_config.yaml"
+CONFIG_FILE="scripts/unified_tuning_config.yaml"
 
-# Methods to tune (13 total: 8 quantum + 5 classical)
+# Methods to tune (unified 12-method configuration)
 METHODS=(
-    "quvine_fused"
+    "quvine_rwr"
     "quvine_ctqw"
     "quvine_dtqw"
-    "quvine_rwr"
-    "quvine_heat"
-    "quvine_poly"
-    "quvine_hgcnmf"
-    "quvine_pgcnmf"
-    "netmf"
-    "node2vec"
+    "baseline_filter_heat"
+    "baseline_filter_poly"
     "baseline_gcnmf"
-    "baseline_filter"
+    "gat_baseline"
+    "graphgps_baseline"
+    "node2vec"
+    "netmf"
     "graphsage"
+    "appnp"
 )
 
 # Networks to tune on (5 PPI networks)

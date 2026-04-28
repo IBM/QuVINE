@@ -6,23 +6,23 @@
 #   Submits one job per method × network type combination.
 #   Each job tunes hyperparameters for all 3 tasks (node_classification,
 #   link_prediction, node_ranking) for a single method on a single network type.
-#   Total jobs: N_METHODS × N_NETWORK_TYPES (default: 10 × 2 = 20 jobs)
+#   Total jobs: N_METHODS × N_NETWORK_TYPES (default: 12 × 2 = 24 jobs)
 #
 # SERIAL MODE (--serial flag):
 #   Submits one job per network type, processing all methods sequentially.
 #   Total jobs: N_NETWORK_TYPES (default: 2 jobs)
 #
 # Usage:
-#   # Parallel mode (default) - 20 jobs (10 methods × 2 networks)
+#   # Parallel mode (default) - 24 jobs (12 methods × 2 networks)
 #   bash scripts/submit_tuning_jobs.sh
 #
 #   # Serial mode - 2 jobs
 #   bash scripts/submit_tuning_jobs.sh --serial
 #
-#   # Tune only on erdos_renyi network - 10 jobs
+#   # Tune only on erdos_renyi network - 12 jobs
 #   bash scripts/submit_tuning_jobs.sh --networks erdos_renyi
 #
-#   # Tune on specific networks - 30 jobs (10 methods × 3 networks)
+#   # Tune on specific networks - 36 jobs (12 methods × 3 networks)
 #   bash scripts/submit_tuning_jobs.sh --networks erdos_renyi,modular,scale_free
 #
 #   # With options
@@ -53,20 +53,22 @@ N_GRAPHS="10"
 DRY_RUN=false
 SERIAL_MODE=false  # Default: parallel (one job per method × network)
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
-CONFIG_FILE="scripts/tuning_config.yaml"
+CONFIG_FILE="scripts/unified_tuning_config.yaml"
 
-# Methods to tune (from config file)
+# Methods to tune (unified 12-method configuration)
 METHODS=(
-    "quvine_walks"
+    "quvine_rwr"
+    "quvine_ctqw"
+    "quvine_dtqw"
     "baseline_filter_heat"
     "baseline_filter_poly"
     "baseline_gcnmf"
+    "gat_baseline"
+    "graphgps_baseline"
     "node2vec"
     "netmf"
     "graphsage"
     "appnp"
-    "gat_baseline"
-    "graphgps_baseline"
 )
 
 # Network types to tune on (default, can be overridden with --networks)

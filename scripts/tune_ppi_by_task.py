@@ -222,8 +222,18 @@ def subsample_ppi_network(
     return G_sub, seeds_sub, targets_sub
 
 
-def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> np.ndarray:
-    """Run QuVINE with multiple quantum walk types and fusion."""
+def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk_type: str = 'rwr') -> np.ndarray:
+    """Run QuVINE with specified quantum walk type.
+    
+    Args:
+        G: NetworkX graph
+        seeds: List of seed nodes
+        params: Hyperparameter dictionary
+        walk_type: Type of quantum walk ('rwr', 'ctqw', or 'dtqw')
+    """
+    from types import SimpleNamespace
+    from quvine.walks.base import BaseWalker
+    
     embedding_dim = params.get('embedding_dim', 128)
     num_views = params.get('num_views', 4)
     walk_length = params.get('walk_length', 40)
@@ -234,42 +244,81 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> n
     restart_prob = params.get('restart_prob', 0.15)
     max_degree = params.get('max_degree', 100)
     degree_alpha = params.get('degree_alpha', 0.5)
+    steps = params.get('steps', 5)
+    time = params.get('time', 1.0)
+    coin = params.get('coin', 'grover')
     
-    # Generate views
-    view_builder = ViewBuilder(
-        G=G,
-        num_views=num_views,
-        max_degree=max_degree,
-        degree_alpha=degree_alpha,
-        seed=42
-    )
-    views = view_builder.generate_views()
+    # Create configuration for walks
+    cfg_dict = {
+        "views": {
+            "num_views": num_views,
+            "constrained": True,
+            "max_degree": max_degree,
+            "max_nodes": 500,
+            "max_edges": 2000,
+            "degree_norm": True,
+            "degree_alpha": degree_alpha,
+        },
+        "walks": {
+            "kinds": [walk_type],  # Use specified walk type
+            "num_walks": num_walks,
+            "walk_length": walk_length,
+            "restart_prob": restart_prob,
+            "max_iter": 100,
+            "steps": steps,
+            "time": time,
+            "coin": coin,
+        },
+        "embedding": {
+            "vector_size": embedding_dim,
+            "window": window_size,
+            "sg": 1,
+            "negative": negative_samples,
+            "min_count": 1,
+            "workers": 4,
+            "epochs": epochs,
+        },
+    }
     
-    # Generate embeddings for each view
-    embeddings = []
-    for view in views:
-        corpus_builder = CorpusBuilder(
-            G=view,
-            walk_length=walk_length,
-            num_walks=num_walks,
-            restart_prob=restart_prob,
-            seed=42
-        )
-        corpus = corpus_builder.build_corpus()
+    # Convert dict to nested namespace
+    def dict_to_namespace(d):
+        if isinstance(d, dict):
+            return SimpleNamespace(**{k: dict_to_namespace(v) for k, v in d.items()})
+        return d
+    
+    cfg = dict_to_namespace(cfg_dict)
+    
+    # Build views and walks
+    rng = np.random.default_rng(42)
+    view_builder = ViewBuilder(cfg, rng)
+    walker = BaseWalker(cfg, rng)
+    corpus_builder = CorpusBuilder()
+    
+    # Generate views and walks for each seed
+    for seed in seeds:
+        view_node_sets = view_builder.build(G, seed)
+        all_walks = []
         
-        emb = corpus_to_embedding(
-            corpus=corpus,
-            embedding_dim=embedding_dim,
-            window_size=window_size,
-            negative_samples=negative_samples,
-            epochs=epochs,
-            seed=42
-        )
-        embeddings.append(emb)
+        for view_nodes in view_node_sets:
+            view_graph = G.subgraph(view_nodes)
+            view_walks_dict = walker.run(view_graph, seed, view_nodes=list(view_nodes))
+            
+            for wtype, walks in view_walks_dict.items():
+                str_walks = [[str(node) for node in walk] for walk in walks]
+                all_walks.extend(str_walks)
+        
+        corpus_builder.add(seed, all_walks)
     
-    # Fuse embeddings
-    fused_embedding = fuse_embeddings(embeddings, method='average')
-    return fused_embedding
+    # Build corpus and generate embedding
+    corpus = corpus_builder.build()
+    nodes_str = [str(n) for n in G.nodes()]
+    embedding = corpus_to_embedding(
+        corpus,
+        nodes=nodes_str,
+        **cfg_dict["embedding"]
+    )
+    
+    return embedding
 
 
 def run_quvine_filter(G: nx.Graph, seeds: List[int], params: Dict[str, Any], filter_type: str) -> np.ndarray:
@@ -321,28 +370,33 @@ def run_quvine_gcnmf(G: nx.Graph, seeds: List[int], params: Dict[str, Any], diff
 def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> Optional[np.ndarray]:
     """Generate embedding for a method with given parameters."""
     try:
-        if method == "quvine_fused":
-            return run_quvine_walks(G, seeds, params)
-        elif method in ["quvine_ctqw", "quvine_dtqw", "quvine_rwr"]:
-            # These would use specific walk types - simplified here
-            return run_quvine_walks(G, seeds, params)
-        elif method == "quvine_heat":
-            return run_quvine_filter(G, seeds, params, "heat")
-        elif method == "quvine_poly":
-            return run_quvine_filter(G, seeds, params, "poly")
-        elif method == "quvine_hgcnmf":
-            return run_quvine_gcnmf(G, seeds, params, "heat")
-        elif method == "quvine_pgcnmf":
-            return run_quvine_gcnmf(G, seeds, params, "poly")
-        elif method == "baseline_filter":
-            filter_type = params.get('filter_type', 'heat')
+        # Quantum walk variants (unified 12-method configuration)
+        if method == "quvine_rwr":
+            return run_quvine_walks(G, seeds, params, walk_type='rwr')
+        elif method == "quvine_ctqw":
+            return run_quvine_walks(G, seeds, params, walk_type='ctqw')
+        elif method == "quvine_dtqw":
+            return run_quvine_walks(G, seeds, params, walk_type='dtqw')
+        
+        # Filter baselines (split from baseline_filter)
+        elif method == "baseline_filter_heat":
             return generate_baseline_filter_embedding_wrapper(
                 G,
-                filter_type=filter_type,
+                filter_type="heat",
                 t=params.get('tau', 2.0),
                 K=params.get('filter_order', 5),
                 embedding_dim=params.get('embedding_dim', 128),
             )
+        elif method == "baseline_filter_poly":
+            return generate_baseline_filter_embedding_wrapper(
+                G,
+                filter_type="poly",
+                K=params.get('filter_order', 5),
+                alpha=params.get('alpha', 0.5),
+                embedding_dim=params.get('embedding_dim', 128),
+            )
+        
+        # GCN-MF baseline
         elif method == "baseline_gcnmf":
             return generate_baseline_gcnmf_embedding(
                 G,
@@ -354,6 +408,68 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 lr=params.get('learning_rate', 0.01),
                 weight_decay=params.get('weight_decay', 5e-4),
             )
+        
+        # GNN baselines with quantum calibration capability
+        elif method == "gat_baseline":
+            try:
+                from quvine.baselines.gat import GATConfig, GATTrainConfig, generate_gat_embedding_by_method_name
+                gat_config = GATConfig(
+                    hidden_dim=params.get('hidden_dim', 64),
+                    output_dim=params.get('embedding_dim', 128),
+                    num_layers=params.get('n_layers', 2),
+                    heads=params.get('n_heads', 4),
+                    dropout=params.get('dropout', 0.5),
+                    attention_dropout=params.get('attn_dropout', 0.2),
+                    residual=True,
+                )
+                train_config = GATTrainConfig(
+                    epochs=params.get('epochs', 200),
+                    lr=params.get('learning_rate', 0.005),
+                    weight_decay=params.get('weight_decay', 5e-4),
+                )
+                return generate_gat_embedding_by_method_name(
+                    G,
+                    method_name="gat_baseline",
+                    embedding_dim=params.get('embedding_dim', 128),
+                    nodelist=list(G.nodes()),
+                    gat_config=gat_config,
+                    train_config=train_config,
+                )
+            except ImportError:
+                logger.warning("GAT not available")
+                return None
+        
+        elif method == "graphgps_baseline":
+            try:
+                from quvine.baselines.graphgps import GraphGPSConfig, GraphGPSTrainConfig, generate_graphgps_embedding_by_method_name
+                gps_config = GraphGPSConfig(
+                    hidden_dim=params.get('hidden_dim', 64),
+                    output_dim=params.get('embedding_dim', 128),
+                    num_layers=params.get('n_layers', 2),
+                    heads=params.get('n_heads', 4),
+                    dropout=params.get('dropout', 0.2),
+                    attn_dropout=0.0,
+                    local_gnn=params.get('mpnn_type', 'gcn'),
+                    lap_pe_dim=0,
+                )
+                train_config = GraphGPSTrainConfig(
+                    epochs=params.get('epochs', 200),
+                    lr=params.get('learning_rate', 0.005),
+                    weight_decay=params.get('weight_decay', 5e-4),
+                )
+                return generate_graphgps_embedding_by_method_name(
+                    G,
+                    method_name="graphgps_baseline",
+                    embedding_dim=params.get('embedding_dim', 128),
+                    nodelist=list(G.nodes()),
+                    gps_config=gps_config,
+                    train_config=train_config,
+                )
+            except ImportError:
+                logger.warning("GraphGPS not available")
+                return None
+        
+        # Classical random walk methods
         elif method == "node2vec":
             n2v_params = {
                 'dimensions': params.get('embedding_dim', 128),
@@ -371,6 +487,8 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 'negative': params.get('negative_samples', 5),
             }
             return run_netmf(G, nodes=list(G.nodes()), **netmf_params)
+        
+        # Classical GNN methods
         elif method == "graphsage":
             sage_params = {
                 'dimensions': params.get('embedding_dim', 128),
@@ -380,6 +498,23 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 'lr': params.get('learning_rate', 0.01),
             }
             return run_graphsage(G, nodes=list(G.nodes()), **sage_params)
+        elif method == "appnp":
+            try:
+                from quvine.baselines.appnp import run_appnp
+                appnp_params = {
+                    'dimensions': params.get('embedding_dim', 128),
+                    'hidden_dim': params.get('hidden_dim', 64),
+                    'n_layers': params.get('n_layers', 2),
+                    'alpha': params.get('alpha', 0.1),
+                    'K': params.get('k_hops', 10),
+                    'epochs': params.get('epochs', 200),
+                    'lr': params.get('learning_rate', 0.01),
+                }
+                return run_appnp(G, nodes=list(G.nodes()), **appnp_params)
+            except ImportError:
+                logger.warning("APPNP not available")
+                return None
+        
         else:
             raise ValueError(f"Unknown method: {method}")
     except Exception as e:
@@ -608,7 +743,7 @@ def tune_method_for_task(
 
 def main():
     parser = argparse.ArgumentParser(description="PPI Network Hyperparameter Tuning")
-    parser.add_argument('--config', type=str, default='scripts/ppi_tuning_config.yaml',
+    parser.add_argument('--config', type=str, default='scripts/unified_tuning_config.yaml',
                         help='Path to configuration file')
     parser.add_argument('--network', type=str, required=True,
                         choices=['STRING', 'BioPlex3', 'HumanNet', 'PCNet', 'ProteomeHD'],
