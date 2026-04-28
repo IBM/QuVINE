@@ -307,19 +307,35 @@ def generate_pilot_graph(network_type: str, config: Dict[str, Any], seed: int = 
     return G
 
 
-def make_quvine_cfg(params: Dict[str, Any], walk_type: str = 'rwr') -> Dict[str, Any]:
-    """Create QuVINE configuration from parameters.
+def make_quvine_cfg(params: Dict[str, Any], walk_type: str = 'rwr', graph_size: Optional[int] = None) -> Dict[str, Any]:
+    """Create QuVINE configuration from parameters with adaptive view constraints.
     
     Args:
         params: Hyperparameter dictionary
         walk_type: Type of quantum walk ('rwr', 'ctqw', or 'dtqw')
+        graph_size: Number of nodes in graph (for adaptive constraints)
     """
+    # Adaptive view constraints based on graph size
+    if graph_size is not None:
+        # For small graphs (< 500 nodes), use larger views to avoid isolation
+        # For large graphs, use default constraints
+        if graph_size < 500:
+            # Use at least 60% of graph for views on small graphs
+            default_max_nodes = max(int(graph_size * 0.6), 100)
+            default_max_degree = max(int(graph_size * 0.3), 30)
+        else:
+            default_max_nodes = 500
+            default_max_degree = 50
+    else:
+        default_max_nodes = 500
+        default_max_degree = 50
+    
     return {
         "views": {
             "num_views": params.get("num_views", 3),
             "constrained": True,
-            "max_degree": params.get("max_degree", 50),
-            "max_nodes": params.get("max_nodes", 500),
+            "max_degree": params.get("max_degree", default_max_degree),
+            "max_nodes": params.get("max_nodes", default_max_nodes),
             "max_edges": params.get("max_edges", 2000),
             "degree_norm": True,
             "degree_alpha": params.get("degree_alpha", 0.5),
@@ -358,7 +374,8 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
     from types import SimpleNamespace
     from quvine.walks.base import BaseWalker
     
-    cfg_dict = make_quvine_cfg(params, walk_type)
+    # Pass graph size for adaptive view constraints
+    cfg_dict = make_quvine_cfg(params, walk_type, graph_size=G.number_of_nodes())
     
     # Convert dict to nested namespace for ViewBuilder and Walker
     def dict_to_namespace(d):
@@ -387,17 +404,27 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
             # Create subgraph from node set
             view_graph = G.subgraph(view_nodes)
             
-            # Generate walks on this view
-            view_walks_dict = walker.run(view_graph, seed, view_nodes=list(view_nodes))
+            # Skip if seed has no neighbors in this view
+            if seed not in view_graph or view_graph.degree(seed) == 0:
+                logger.warning(f"Seed {seed} has no neighbors in view, skipping")
+                continue
             
-            # Combine all walk types and convert node IDs to strings
-            for walk_type, walks in view_walks_dict.items():
-                # Convert each walk's nodes to strings
-                str_walks = [[str(node) for node in walk] for walk in walks]
-                all_walks.extend(str_walks)
+            # Generate walks on this view
+            try:
+                view_walks_dict = walker.run(view_graph, seed, view_nodes=list(view_nodes))
+                
+                # Combine all walk types and convert node IDs to strings
+                for wtype, walks in view_walks_dict.items():
+                    # Convert each walk's nodes to strings
+                    str_walks = [[str(node) for node in walk] for walk in walks]
+                    all_walks.extend(str_walks)
+            except Exception as e:
+                logger.warning(f"Walk generation failed for seed {seed} in view: {e}")
+                continue
         
-        # Add walks for this seed to corpus
-        corpus_builder.add(seed, all_walks)
+        # Add walks for this seed to corpus (even if empty, to maintain structure)
+        if all_walks:
+            corpus_builder.add(seed, all_walks)
     
     # Build corpus and generate embedding
     corpus = corpus_builder.build()
@@ -418,8 +445,8 @@ def run_filter_embedding(G: nx.Graph, seeds: List[int], params: Dict[str, Any], 
     return generate_baseline_filter_embedding_wrapper(
         G,
         filter_type=filter_type,
-        t=params.get('tau', 2.0),
-        K=params.get('filter_order', 5),
+        t=params.get('time', 2.0),  # Fixed: use 'time' not 'tau'
+        K=params.get('order', 5),   # Fixed: use 'order' not 'filter_order'
         embedding_dim=params.get('embedding_dim', 128),
     )
 

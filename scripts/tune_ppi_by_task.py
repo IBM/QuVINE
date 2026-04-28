@@ -242,11 +242,20 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
     negative_samples = params.get('negative_samples', 5)
     epochs = params.get('epochs', 20)
     restart_prob = params.get('restart_prob', 0.15)
-    max_degree = params.get('max_degree', 100)
     degree_alpha = params.get('degree_alpha', 0.5)
     steps = params.get('steps', 5)
     time = params.get('time', 1.0)
     coin = params.get('coin', 'grover')
+    
+    # Adaptive view constraints based on graph size
+    graph_size = G.number_of_nodes()
+    if graph_size < 500:
+        # For small graphs, use larger views to avoid isolation
+        max_degree = params.get('max_degree', max(int(graph_size * 0.3), 30))
+        max_nodes = params.get('max_nodes', max(int(graph_size * 0.6), 100))
+    else:
+        max_degree = params.get('max_degree', 100)
+        max_nodes = params.get('max_nodes', 500)
     
     # Create configuration for walks
     cfg_dict = {
@@ -254,7 +263,7 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
             "num_views": num_views,
             "constrained": True,
             "max_degree": max_degree,
-            "max_nodes": 500,
+            "max_nodes": max_nodes,
             "max_edges": 2000,
             "degree_norm": True,
             "degree_alpha": degree_alpha,
@@ -301,13 +310,25 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
         
         for view_nodes in view_node_sets:
             view_graph = G.subgraph(view_nodes)
-            view_walks_dict = walker.run(view_graph, seed, view_nodes=list(view_nodes))
             
-            for wtype, walks in view_walks_dict.items():
-                str_walks = [[str(node) for node in walk] for walk in walks]
-                all_walks.extend(str_walks)
+            # Skip if seed has no neighbors in this view
+            if seed not in view_graph or view_graph.degree(seed) == 0:
+                logger.warning(f"Seed {seed} has no neighbors in view, skipping")
+                continue
+            
+            try:
+                view_walks_dict = walker.run(view_graph, seed, view_nodes=list(view_nodes))
+                
+                for wtype, walks in view_walks_dict.items():
+                    str_walks = [[str(node) for node in walk] for walk in walks]
+                    all_walks.extend(str_walks)
+            except Exception as e:
+                logger.warning(f"Walk generation failed for seed {seed} in view: {e}")
+                continue
         
-        corpus_builder.add(seed, all_walks)
+        # Add walks for this seed to corpus (even if empty, to maintain structure)
+        if all_walks:
+            corpus_builder.add(seed, all_walks)
     
     # Build corpus and generate embedding
     corpus = corpus_builder.build()
@@ -383,17 +404,16 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
             return generate_baseline_filter_embedding_wrapper(
                 G,
                 filter_type="heat",
-                t=params.get('tau', 2.0),
-                K=params.get('filter_order', 5),
+                t=params.get('time', 2.0),  # Fixed: use 'time' not 'tau'
                 embedding_dim=params.get('embedding_dim', 128),
             )
         elif method == "baseline_filter_poly":
             return generate_baseline_filter_embedding_wrapper(
                 G,
                 filter_type="poly",
-                K=params.get('filter_order', 5),
-                alpha=params.get('alpha', 0.5),
+                K=params.get('order', 5),  # Fixed: use 'order' not 'filter_order'
                 embedding_dim=params.get('embedding_dim', 128),
+                # Removed 'alpha' - not a valid parameter for this function
             )
         
         # GCN-MF baseline
