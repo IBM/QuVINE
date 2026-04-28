@@ -299,9 +299,23 @@ def generate_appnp_embedding(
     
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
-    # Training loop (unsupervised: reconstruct propagated predictions)
+    # Sample edges for link reconstruction loss
+    edges = list(G.edges())
+    num_edges = len(edges)
+    num_neg_samples = min(num_edges, N * 2)  # Limit negative samples
+    
+    # Create edge index tensor
+    edge_src = [node_list.index(u) for u, v in edges]
+    edge_dst = [node_list.index(v) for u, v in edges]
+    pos_edges = torch.LongTensor([edge_src, edge_dst])
+    
+    # Training loop (unsupervised: link reconstruction)
     logger.info(f"Training APPNP for {epochs} epochs...")
     model.train()
+    
+    best_loss = float('inf')
+    patience_counter = 0
+    patience = 20
     
     for epoch in range(epochs):
         optimizer.zero_grad()
@@ -316,11 +330,35 @@ def generate_appnp_embedding(
             H_prop = adj_dense @ H_prop
             Z = Z + (1 - alpha) * (alpha ** (k + 1)) * H_prop
         
-        # Unsupervised loss: reconstruct the MLP predictions after propagation
-        loss = F.mse_loss(Z, H)
+        # Link reconstruction loss: predict edges using dot product
+        pos_src_emb = Z[pos_edges[0]]
+        pos_dst_emb = Z[pos_edges[1]]
+        pos_scores = (pos_src_emb * pos_dst_emb).sum(dim=1)
+        
+        # Sample negative edges
+        neg_src = torch.randint(0, N, (num_neg_samples,))
+        neg_dst = torch.randint(0, N, (num_neg_samples,))
+        neg_src_emb = Z[neg_src]
+        neg_dst_emb = Z[neg_dst]
+        neg_scores = (neg_src_emb * neg_dst_emb).sum(dim=1)
+        
+        # Binary cross-entropy loss
+        pos_loss = F.binary_cross_entropy_with_logits(pos_scores, torch.ones_like(pos_scores))
+        neg_loss = F.binary_cross_entropy_with_logits(neg_scores, torch.zeros_like(neg_scores))
+        loss = pos_loss + neg_loss
         
         loss.backward()
         optimizer.step()
+        
+        # Early stopping
+        if loss.item() < best_loss:
+            best_loss = loss.item()
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
         
         if (epoch + 1) % 50 == 0:
             logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")

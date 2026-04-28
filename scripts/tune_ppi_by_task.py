@@ -432,7 +432,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
         # GNN baselines with quantum calibration capability
         elif method == "gat_baseline":
             try:
-                from quvine.baselines.gat import GATConfig, GATTrainConfig, generate_gat_embedding_by_method_name
+                from quvine.baselines.gat import GATConfig, TrainConfig, generate_gat_embedding_by_method_name
                 gat_config = GATConfig(
                     hidden_dim=params.get('hidden_dim', 64),
                     output_dim=params.get('embedding_dim', 128),
@@ -442,7 +442,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                     attention_dropout=params.get('attn_dropout', 0.2),
                     residual=True,
                 )
-                train_config = GATTrainConfig(
+                train_config = TrainConfig(
                     epochs=params.get('epochs', 200),
                     lr=params.get('learning_rate', 0.005),
                     weight_decay=params.get('weight_decay', 5e-4),
@@ -461,7 +461,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
         
         elif method == "graphgps_baseline":
             try:
-                from quvine.baselines.graphgps import GraphGPSConfig, GraphGPSTrainConfig, generate_graphgps_embedding_by_method_name
+                from quvine.baselines.graphgps import GraphGPSConfig, TrainConfig, generate_graphgps_embedding_by_method_name
                 gps_config = GraphGPSConfig(
                     hidden_dim=params.get('hidden_dim', 64),
                     output_dim=params.get('embedding_dim', 128),
@@ -472,7 +472,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                     local_gnn=params.get('mpnn_type', 'gcn'),
                     lap_pe_dim=0,
                 )
-                train_config = GraphGPSTrainConfig(
+                train_config = TrainConfig(
                     epochs=params.get('epochs', 200),
                     lr=params.get('learning_rate', 0.005),
                     weight_decay=params.get('weight_decay', 5e-4),

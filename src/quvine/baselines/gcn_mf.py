@@ -632,6 +632,10 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
     true_adj_train = torch.FloatTensor(all_labels)
     
     model.train()
+    best_loss = float('inf')
+    patience_counter = 0
+    patience = 15
+    
     for epoch in range(epochs):
         optimizer.zero_grad()
         
@@ -646,6 +650,16 @@ def generate_quvine_gcnmf_embedding(G, q_targets, embedding_dim=128,
         
         loss.backward()
         optimizer.step()
+        
+        # Early stopping
+        if loss.item() < best_loss:
+            best_loss = loss.item()
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
         
         if (epoch + 1) % 50 == 0:
             logger.info(f"Epoch {epoch+1}/{epochs}: Loss = {loss.item():.4f}")
@@ -826,8 +840,12 @@ def generate_baseline_gcnmf_embedding(
     edge_indices_train = torch.LongTensor(all_edges).t()  # Shape: (2, n_samples)
     true_adj_train = torch.FloatTensor(all_labels)
     
-    # Training loop
+    # Training loop with early stopping
     model.train()
+    best_loss = float('inf')
+    patience_counter = 0
+    patience = 15
+    
     for epoch in range(epochs):
         optimizer.zero_grad()
 
@@ -836,6 +854,16 @@ def generate_baseline_gcnmf_embedding(
         loss = F.binary_cross_entropy_with_logits(scores, true_adj_train)
         loss.backward()
         optimizer.step()
+
+        # Early stopping
+        if loss.item() < best_loss:
+            best_loss = loss.item()
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
 
         if (epoch + 1) % 50 == 0:
             logger.info(f"Baseline GCN-MF Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")

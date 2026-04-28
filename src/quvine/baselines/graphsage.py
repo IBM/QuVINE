@@ -116,8 +116,12 @@ if _TORCH:
         pos_u = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long)
         pos_v = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long)
 
-        # ── Training loop ──────────────────────────────────────────────────
+        # ── Training loop with early stopping ──────────────────────────────
         model.train()
+        best_loss = float('inf')
+        patience_counter = 0
+        patience = 15
+        
         for epoch in range(epochs):
             optimizer.zero_grad()
             Z = model(H_t, adj_t)            # (N, dim) L2-normalised
@@ -128,9 +132,10 @@ if _TORCH:
                 pos_sim, torch.ones_like(pos_sim)
             )
 
-            # Negative loss: random non-edge pairs
-            neg_u_idx = torch.randint(0, N, (len(pos_pairs) * neg_samples,))
-            neg_v_idx = torch.randint(0, N, (len(pos_pairs) * neg_samples,))
+            # Negative loss: random non-edge pairs (limit samples for speed)
+            num_neg = min(len(pos_pairs) * neg_samples, len(pos_pairs) * 5)
+            neg_u_idx = torch.randint(0, N, (num_neg,))
+            neg_v_idx = torch.randint(0, N, (num_neg,))
             # Filter self-loops (best-effort)
             valid = neg_u_idx != neg_v_idx
             neg_u_idx, neg_v_idx = neg_u_idx[valid], neg_v_idx[valid]
@@ -143,6 +148,15 @@ if _TORCH:
             loss = pos_loss + neg_loss
             loss.backward()
             optimizer.step()
+            
+            # Early stopping
+            if loss.item() < best_loss:
+                best_loss = loss.item()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    break
 
         model.eval()
         with torch.no_grad():
