@@ -396,33 +396,90 @@ python - << 'PYEOF'
 import json
 import os
 from pathlib import Path
+from collections import defaultdict
 
 output_dir = Path('${OUTPUT_BASE}')
-results = {}
+results_by_network = defaultdict(dict)
+
+# All known methods (unified 12-method configuration)
+known_methods = [
+    'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',
+    'baseline_filter_heat', 'baseline_filter_poly', 'baseline_gcnmf',
+    'gat_baseline', 'graphgps_baseline', 'appnp',
+    'node2vec', 'netmf', 'graphsage'
+]
 
 # Collect all individual method results
 for json_file in output_dir.glob('*_tuning_by_task.json'):
     print(f'Loading: {json_file.name}')
-    with open(json_file) as f:
-        data = json.load(f)
-        results.update(data)
-
-# Save aggregated results
-for net_type in ['erdos_renyi', 'modular']:
-    net_results = {}
-    for method, tasks in results.items():
-        if any(f'{net_type}_{method}' in str(f) for f in output_dir.glob('*.json')):
-            net_results[method] = tasks
     
-    if net_results:
-        output_file = output_dir / f'{net_type}_tuning_by_task.json'
-        with open(output_file, 'w') as f:
-            json.dump(net_results, f, indent=2)
-        print(f'Saved: {output_file}')
-        print(f'  Methods: {len(net_results)}')
+    # Parse filename: NETWORK_METHOD_tuning_by_task.json
+    # Example: erdos_renyi_node2vec_tuning_by_task.json
+    parts = json_file.stem.split('_')
+    
+    # Find where 'tuning' starts
+    try:
+        tuning_idx = parts.index('tuning')
+    except ValueError:
+        print(f'  Skipping {json_file.name}: no "tuning" in filename')
+        continue
+    
+    network_method_parts = parts[:tuning_idx]
+    
+    # Last part before 'tuning' should be method name
+    if len(network_method_parts) < 2:
+        print(f'  Skipping {json_file.name}: insufficient parts')
+        continue
+    
+    potential_method = network_method_parts[-1]
+    
+    # Check if last part is a known method
+    if potential_method in known_methods:
+        # NETWORK_METHOD format
+        network_type = '_'.join(network_method_parts[:-1])
+        
+        with open(json_file) as f:
+            data = json.load(f)
+        
+        # Merge method data into network results
+        results_by_network[network_type].update(data)
+        print(f'  -> {network_type}: added {len(data)} method(s)')
+    else:
+        # Might be aggregated file (NETWORK_tuning_by_task.json)
+        # Skip to avoid double-counting
+        print(f'  Skipping {json_file.name}: appears to be aggregated file')
+
+# Save aggregated results per network type
+print('')
+print('Saving aggregated results...')
+for network_type, methods_data in sorted(results_by_network.items()):
+    output_file = output_dir / f'{network_type}_tuning_by_task.json'
+    with open(output_file, 'w') as f:
+        json.dump(methods_data, f, indent=2)
+    print(f'Saved: {output_file}')
+    print(f'  Methods: {len(methods_data)}')
+    if methods_data:
+        sample_method = list(methods_data.keys())[0]
+        tasks = list(methods_data[sample_method].keys())
+        print(f'  Tasks: {tasks}')
+
+# Save overall summary
+summary = {
+    'network_types': len(results_by_network),
+    'total_methods': sum(len(methods) for methods in results_by_network.values()),
+    'networks': sorted(results_by_network.keys()),
+    'methods_per_network': {k: len(v) for k, v in sorted(results_by_network.items())}
+}
+
+summary_file = output_dir / 'tuning_summary.json'
+with open(summary_file, 'w') as f:
+    json.dump(summary, f, indent=2)
 
 print('')
 print('Aggregation complete!')
+print(f'Network types: {summary["network_types"]}')
+print(f'Total method-network combinations: {summary["total_methods"]}')
+print(f'Networks: {summary["networks"]}')
 PYEOF
 
 EXIT_CODE=\$?

@@ -417,56 +417,74 @@ from collections import defaultdict
 output_dir = Path('${OUTPUT_BASE}')
 results_by_network_disease = defaultdict(dict)
 
+# All known methods (unified 12-method configuration)
+known_methods = [
+    'quvine_rwr', 'quvine_ctqw', 'quvine_dtqw',
+    'baseline_filter_heat', 'baseline_filter_poly', 'baseline_gcnmf',
+    'gat_baseline', 'graphgps_baseline', 'appnp',
+    'node2vec', 'netmf', 'graphsage'
+]
+
 # Collect all individual method results
 for json_file in output_dir.glob('*_tuning_by_task.json'):
     print(f'Loading: {json_file.name}')
     
-    # Parse filename: NETWORK_DISEASE_tuning_by_task.json or NETWORK_DISEASE_METHOD_tuning_by_task.json
+    # Parse filename: NETWORK_DISEASE_METHOD_tuning_by_task.json
+    # Example: BioPlex3_asthma_node2vec_tuning_by_task.json
     parts = json_file.stem.split('_')
     
     # Find where 'tuning' starts
-    tuning_idx = parts.index('tuning')
-    network_disease_parts = parts[:tuning_idx]
+    try:
+        tuning_idx = parts.index('tuning')
+    except ValueError:
+        print(f'  Skipping {json_file.name}: no "tuning" in filename')
+        continue
     
-    # Last part before 'tuning' might be method name or disease
-    # If it's a known method, it's NETWORK_DISEASE_METHOD format
-    # Otherwise it's NETWORK_DISEASE format
+    network_disease_method_parts = parts[:tuning_idx]
     
-    with open(json_file) as f:
-        data = json.load(f)
+    # Last part before 'tuning' should be method name
+    if len(network_disease_method_parts) < 2:
+        print(f'  Skipping {json_file.name}: insufficient parts')
+        continue
     
-    # Determine network_disease key
-    if len(network_disease_parts) >= 2:
-        # Could be NETWORK_DISEASE or NETWORK_DISEASE_METHOD
-        # Check if last part is a method name
-        potential_method = network_disease_parts[-1]
-        known_methods = ['quvine_fused', 'quvine_ctqw', 'quvine_dtqw', 'quvine_rwr',
-                        'quvine_heat', 'quvine_poly', 'quvine_hgcnmf', 'quvine_pgcnmf',
-                        'netmf', 'node2vec', 'baseline_gcnmf', 'baseline_filter', 'graphsage']
+    potential_method = network_disease_method_parts[-1]
+    
+    # Check if last part is a known method
+    if potential_method in known_methods:
+        # NETWORK_DISEASE_METHOD format
+        network_disease = '_'.join(network_disease_method_parts[:-1])
         
-        if potential_method in known_methods:
-            # NETWORK_DISEASE_METHOD format
-            network_disease = '_'.join(network_disease_parts[:-1])
-        else:
-            # NETWORK_DISEASE format
-            network_disease = '_'.join(network_disease_parts)
+        with open(json_file) as f:
+            data = json.load(f)
         
+        # Merge method data into network_disease results
         results_by_network_disease[network_disease].update(data)
+        print(f'  -> {network_disease}: added {len(data)} method(s)')
+    else:
+        # Might be aggregated file (NETWORK_DISEASE_tuning_by_task.json)
+        # Skip to avoid double-counting
+        print(f'  Skipping {json_file.name}: appears to be aggregated file')
 
 # Save aggregated results per network-disease pair
-for network_disease, methods_data in results_by_network_disease.items():
+print('')
+print('Saving aggregated results...')
+for network_disease, methods_data in sorted(results_by_network_disease.items()):
     output_file = output_dir / f'{network_disease}_tuning_by_task.json'
     with open(output_file, 'w') as f:
         json.dump(methods_data, f, indent=2)
     print(f'Saved: {output_file}')
     print(f'  Methods: {len(methods_data)}')
-    print(f'  Tasks per method: {list(list(methods_data.values())[0].keys()) if methods_data else []}')
+    if methods_data:
+        sample_method = list(methods_data.keys())[0]
+        tasks = list(methods_data[sample_method].keys())
+        print(f'  Tasks: {tasks}')
 
 # Save overall summary
 summary = {
     'network_disease_pairs': len(results_by_network_disease),
     'total_methods': sum(len(methods) for methods in results_by_network_disease.values()),
-    'pairs': list(results_by_network_disease.keys())
+    'pairs': sorted(results_by_network_disease.keys()),
+    'methods_per_pair': {k: len(v) for k, v in sorted(results_by_network_disease.items())}
 }
 
 summary_file = output_dir / 'tuning_summary.json'
@@ -477,6 +495,7 @@ print('')
 print('Aggregation complete!')
 print(f'Network-disease pairs: {summary["network_disease_pairs"]}')
 print(f'Total method-pair combinations: {summary["total_methods"]}')
+print(f'Pairs: {summary["pairs"]}')
 PYEOF
 
 EXIT_CODE=\$?
