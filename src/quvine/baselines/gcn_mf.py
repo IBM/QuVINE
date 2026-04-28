@@ -736,7 +736,8 @@ def generate_baseline_gcnmf_embedding(
     epochs: int = 200,
     lr: float = 0.01,
     weight_decay: float = 5e-4,
-    random_state: int = 42
+    random_state: int = 42,
+    device: str = "cpu",
 ) -> np.ndarray:
     """
     Generate baseline GCN-MF embeddings (WITHOUT quantum calibration).
@@ -768,32 +769,35 @@ def generate_baseline_gcnmf_embedding(
     """
     if not TORCH_AVAILABLE:
         raise ImportError("PyTorch is required for GCN-MF. Install with: pip install torch")
-    
+
     import torch
     import torch.nn.functional as F
     import torch.optim as optim
-    
+
     np.random.seed(random_state)
     torch.manual_seed(random_state)
-    
+
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu") \
+        if device == "auto" else torch.device(device)
+
     N = G.number_of_nodes()
     node_list = list(G.nodes())
     node_to_idx = {node: idx for idx, node in enumerate(node_list)}
-    
+
     # Get adjacency matrix and normalize
     A = nx.adjacency_matrix(G, nodelist=node_list)
     A_norm = normalize_adjacency(A)
-    
+
     # Convert to PyTorch tensors
-    A_norm_torch = torch.FloatTensor(A_norm.toarray())
-    
+    A_norm_torch = torch.FloatTensor(A_norm.toarray()).to(dev)
+
     # Generate random input features (no diffusion)
     X = np.random.randn(N, embedding_dim)
     row_norms = np.linalg.norm(X, axis=1, keepdims=True)
     row_norms[row_norms == 0] = 1.0
     X = X / row_norms
-    X_torch = torch.FloatTensor(X)
-    
+    X_torch = torch.FloatTensor(X).to(dev)
+
     # Create baseline GCNMF model
     model = GCNMF(
         n_nodes=N,
@@ -802,8 +806,8 @@ def generate_baseline_gcnmf_embedding(
         output_dim=embedding_dim,
         mf_dim=mf_dim,
         n_layers=n_layers
-    )
-    
+    ).to(dev)
+
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
     # Pre-sample balanced edges and non-edges for training
@@ -835,11 +839,11 @@ def generate_baseline_gcnmf_embedding(
     # Combine positive and negative samples
     all_edges = [(node_to_idx[u], node_to_idx[v]) for u, v in pos_edges] + neg_edges
     all_labels = [1.0] * len(pos_edges) + [0.0] * len(neg_edges)
-    
+
     # Convert to tensors
-    edge_indices_train = torch.LongTensor(all_edges).t()  # Shape: (2, n_samples)
-    true_adj_train = torch.FloatTensor(all_labels)
-    
+    edge_indices_train = torch.LongTensor(all_edges).t().to(dev)  # Shape: (2, n_samples)
+    true_adj_train = torch.FloatTensor(all_labels).to(dev)
+
     # Training loop with early stopping
     model.train()
     best_loss = float('inf')

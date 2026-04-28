@@ -49,7 +49,7 @@ fixed_params:
   # Training settings
   training:
     random_seed: 42
-    device: "cpu"
+    device: "auto"
 
 # ============================================================================
 # PPI NETWORK PATHS
@@ -238,7 +238,7 @@ optuna:
   pruner: "MedianPruner"
   pruner_params:
     n_startup_trials: 5
-    n_warmup_steps: 10
+    n_warmup_steps: 2   # prune from 3rd graph/replicate onward (was 10 → never fired)
     interval_steps: 1
   
   # Method-specific trial counts (optimized for <5 hour jobs)

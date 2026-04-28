@@ -284,7 +284,7 @@ def run_quvine_walks(G: nx.Graph, seeds: List[int], params: Dict[str, Any], walk
             "sg": 1,
             "negative": negative_samples,
             "min_count": 1,
-            "workers": 4,
+            "workers": int(os.environ.get("LSB_DJOB_NUMPROC", "4")),
             "epochs": epochs,
         },
     }
@@ -388,7 +388,18 @@ def run_quvine_gcnmf(G: nx.Graph, seeds: List[int], params: Dict[str, Any], diff
     return embedding
 
 
-def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[str, Any]) -> Optional[np.ndarray]:
+def resolve_device(device_str: str) -> str:
+    """Resolve 'auto' to 'cuda' or 'cpu' based on availability."""
+    if device_str == "auto":
+        try:
+            import torch
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            return "cpu"
+    return device_str
+
+
+def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[str, Any], device: str = "cpu") -> Optional[np.ndarray]:
     """Generate embedding for a method with given parameters."""
     try:
         # Quantum walk variants (unified 12-method configuration)
@@ -427,6 +438,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 epochs=params.get('epochs', 200),
                 lr=params.get('learning_rate', 0.01),
                 weight_decay=params.get('weight_decay', 5e-4),
+                device=device,
             )
         
         # GNN baselines with quantum calibration capability
@@ -446,6 +458,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                     epochs=params.get('epochs', 200),
                     lr=params.get('learning_rate', 0.005),
                     weight_decay=params.get('weight_decay', 5e-4),
+                    device=device,
                 )
                 return generate_gat_embedding_by_method_name(
                     G,
@@ -458,7 +471,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
             except ImportError:
                 logger.warning("GAT not available")
                 return None
-        
+
         elif method == "graphgps_baseline":
             try:
                 from quvine.baselines.graphgps import GraphGPSConfig, TrainConfig, generate_graphgps_embedding_by_method_name
@@ -476,6 +489,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                     epochs=params.get('epochs', 200),
                     lr=params.get('learning_rate', 0.005),
                     weight_decay=params.get('weight_decay', 5e-4),
+                    device=device,
                 )
                 return generate_graphgps_embedding_by_method_name(
                     G,
@@ -488,7 +502,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
             except ImportError:
                 logger.warning("GraphGPS not available")
                 return None
-        
+
         # Classical random walk methods
         elif method == "node2vec":
             n2v_params = {
@@ -498,6 +512,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 'p': params.get('p', 1.0),
                 'q': params.get('q', 1.0),
                 'window': params.get('window_size', 10),
+                'workers': int(os.environ.get("LSB_DJOB_NUMPROC", "4")),
             }
             return run_node2vec(G, nodes=list(G.nodes()), **n2v_params)
         elif method == "netmf":
@@ -517,6 +532,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                 'n_layers': params.get('n_layers', 2),
                 'epochs': params.get('epochs', 100),
                 'lr': params.get('learning_rate', 0.01),
+                'device': device,
             }
             return run_graphsage(G, nodes=list(G.nodes()), **sage_params)
         elif method == "appnp":
@@ -530,6 +546,7 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
                     'K': params.get('k_hops', 10),
                     'epochs': params.get('epochs', 200),
                     'lr': params.get('learning_rate', 0.01),
+                    'device': device,
                 }
                 return run_appnp(G, nodes=list(G.nodes()), **appnp_params)
             except ImportError:
@@ -706,40 +723,44 @@ def tune_method_for_task(
     test_non_edges_list: List[List[Tuple[int, int]]],
     config: Dict[str, Any],
     n_trials: Optional[int] = None,
+    device: str = "cpu",
 ) -> Tuple[Dict[str, Any], float]:
     """Tune hyperparameters for a method on a specific task."""
     actual_trials = get_n_trials_for_method(method, config, n_trials)
     logger.info(f"Tuning {method} for {task} with {actual_trials} trials on {len(graphs)} graphs")
-    
+
     def objective(trial_or_params):
         """Objective function for a specific task."""
         if isinstance(trial_or_params, dict):
             params = trial_or_params
         else:
             params = suggest_params_from_config(trial_or_params, method, config)
-        
+
         scores = []
-        for G, seeds, targets, test_edges, test_non_edges in zip(
+        for step, (G, seeds, targets, test_edges, test_non_edges) in enumerate(zip(
             graphs, seeds_list, targets_list, test_edges_list, test_non_edges_list
-        ):
-            embedding = generate_embedding(method, G, seeds, params)
+        )):
+            embedding = generate_embedding(method, G, seeds, params, device=device)
             if embedding is None:
                 scores.append(0.0)
-                continue
-            
-            # Evaluate based on task
-            if task == "node_classification":
-                score = evaluate_node_classification(embedding, G, config)
-            elif task == "link_prediction":
-                score = evaluate_link_pred(embedding, G, test_edges, test_non_edges, config)
-            elif task == "node_ranking":
-                score = evaluate_node_rank(embedding, G, seeds, targets, config)
             else:
-                raise ValueError(f"Unknown task: {task}")
-            
-            scores.append(score)
-        
-        return np.mean(scores)
+                if task == "node_classification":
+                    score = evaluate_node_classification(embedding, G, config)
+                elif task == "link_prediction":
+                    score = evaluate_link_pred(embedding, G, test_edges, test_non_edges, config)
+                elif task == "node_ranking":
+                    score = evaluate_node_rank(embedding, G, seeds, targets, config)
+                else:
+                    raise ValueError(f"Unknown task: {task}")
+                scores.append(score)
+
+            # Report intermediate value so MedianPruner can kill bad trials early
+            if hasattr(trial_or_params, 'report') and scores:
+                trial_or_params.report(float(np.mean(scores)), step)
+                if trial_or_params.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+
+        return float(np.mean(scores)) if scores else 0.0
     
     if OPTUNA_AVAILABLE:
         optuna_config = config.get('optuna', {})
@@ -747,7 +768,13 @@ def tune_method_for_task(
             n_startup_trials=optuna_config.get('n_startup_trials', 10)
         )
         
-        study = optuna.create_study(direction='maximize', sampler=sampler)
+        pruner_cfg = optuna_config.get('pruner_params', {})
+        pruner = optuna.pruners.MedianPruner(
+            n_startup_trials=pruner_cfg.get('n_startup_trials', 5),
+            n_warmup_steps=pruner_cfg.get('n_warmup_steps', 2),
+            interval_steps=pruner_cfg.get('interval_steps', 1),
+        )
+        study = optuna.create_study(direction='maximize', sampler=sampler, pruner=pruner)
         study.optimize(objective, n_trials=actual_trials, show_progress_bar=False)
         best_params = study.best_params
         best_score = study.best_value
@@ -795,12 +822,27 @@ def main():
                         help='Override number of trials per method')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Output directory (default: from config)')
+    parser.add_argument('--device', type=str, default='auto',
+                        help='Device for DNN methods: cpu, cuda, or auto (default: auto)')
     
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
-    
+
+    # Resolve device and set CPU thread count when running on CPU
+    device = resolve_device(args.device)
+    logger.info(f"DNN device: {device}")
+    if device == "cpu":
+        try:
+            import torch
+            import os
+            n_threads = int(os.environ.get("LSB_DJOB_NUMPROC", "4"))
+            torch.set_num_threads(n_threads)
+            logger.info(f"CPU threads for PyTorch: {n_threads}")
+        except (ImportError, ValueError):
+            pass
+
     # Get methods to tune
     if args.methods:
         methods = args.methods
@@ -876,6 +918,7 @@ def main():
                 test_non_edges_list=test_non_edges_list,
                 config=config,
                 n_trials=args.n_trials,
+                device=device,
             )
             
             results[method][task] = {

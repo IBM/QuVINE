@@ -15,7 +15,7 @@
 #   - Total time: ~30-60 minutes (parallelized)
 #
 # Usage:
-#   bash scripts/submit_quick_test.sh [--dry-run]
+#   bash scripts/submit_quick_test.sh [--dry-run] [--use-gpu]
 #
 # What This Tests:
 #   ✓ All 12 methods run successfully
@@ -29,11 +29,13 @@ set -e
 
 # Parse arguments
 DRY_RUN=""
-if [[ "$1" == "--dry-run" ]]; then
-    DRY_RUN="--dry-run"
-    echo "DRY RUN MODE - No jobs will be submitted"
-    echo ""
-fi
+GPU_FLAG=""
+for arg in "$@"; do
+    case $arg in
+        --dry-run) DRY_RUN="--dry-run"; echo "DRY RUN MODE - No jobs will be submitted"; echo "" ;;
+        --use-gpu) GPU_FLAG="--use-gpu"; echo "GPU MODE - DNN jobs will request GPU nodes"; echo "" ;;
+    esac
+done
 
 # Configuration
 TEST_CONFIG="scripts/test_tuning_config.yaml"
@@ -74,6 +76,7 @@ bash scripts/submit_tuning_jobs.sh \
     --walltime "$WALLTIME" \
     --memory "$MEMORY" \
     --n-graphs 5 \
+    $GPU_FLAG \
     $DRY_RUN
 
 echo ""
@@ -90,6 +93,7 @@ bash scripts/submit_ppi_tuning_jobs.sh \
     --walltime "$WALLTIME" \
     --memory "$MEMORY" \
     --n-replicates 2 \
+    $GPU_FLAG \
     $DRY_RUN
 
 echo ""

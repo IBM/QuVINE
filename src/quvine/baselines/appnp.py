@@ -213,7 +213,8 @@ def generate_appnp_embedding(
     epochs: int = 200,
     use_features: bool = False,
     features: Optional[np.ndarray] = None,
-    random_state: int = 42
+    random_state: int = 42,
+    device: str = "cpu",
 ) -> np.ndarray:
     """
     Generate node embeddings using APPNP.
@@ -258,21 +259,24 @@ def generate_appnp_embedding(
     torch.manual_seed(random_state)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(random_state)
-    
+
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu") \
+        if device == "auto" else torch.device(device)
+
     N = G.number_of_nodes()
     node_list = list(G.nodes())
-    
+
     # Get adjacency matrix and normalize
     adj = nx.to_scipy_sparse_array(G, nodelist=node_list, format='csr')
     adj_normalized = normalize_adjacency(adj, add_self_loops=True)
-    
+
     # Convert to torch sparse tensor
     adj_normalized_coo = adj_normalized.tocoo()
-    indices = torch.LongTensor(np.vstack([adj_normalized_coo.row, adj_normalized_coo.col]))
-    values = torch.FloatTensor(adj_normalized_coo.data)
+    indices = torch.LongTensor(np.vstack([adj_normalized_coo.row, adj_normalized_coo.col])).to(dev)
+    values = torch.FloatTensor(adj_normalized_coo.data).to(dev)
     shape = adj_normalized_coo.shape
-    adj_torch = torch.sparse_coo_tensor(indices, values, shape)
-    
+    adj_torch = torch.sparse_coo_tensor(indices, values, shape, device=dev)
+
     # Generate or use features
     if use_features and features is not None:
         X = features
@@ -282,12 +286,12 @@ def generate_appnp_embedding(
         input_dim = hidden_dim
         X = np.random.randn(N, input_dim)
         X = X / np.linalg.norm(X, axis=1, keepdims=True)  # Normalize
-    
-    X_torch = torch.FloatTensor(X)
+
+    X_torch = torch.FloatTensor(X).to(dev)
 
     # Build dense normalized adjacency once so propagation remains differentiable
-    adj_dense = torch.FloatTensor(adj_normalized.toarray())
-    
+    adj_dense = torch.FloatTensor(adj_normalized.toarray()).to(dev)
+
     # Initialize MLP predictor
     model = MLPPredictor(
         input_dim=input_dim,
@@ -295,61 +299,61 @@ def generate_appnp_embedding(
         output_dim=embedding_dim,
         n_layers=n_layers,
         dropout=dropout
-    )
-    
+    ).to(dev)
+
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    
+
     # Sample edges for link reconstruction loss
     edges = list(G.edges())
     num_edges = len(edges)
     num_neg_samples = min(num_edges, N * 2)  # Limit negative samples
-    
+
     # Create edge index tensor
     edge_src = [node_list.index(u) for u, v in edges]
     edge_dst = [node_list.index(v) for u, v in edges]
-    pos_edges = torch.LongTensor([edge_src, edge_dst])
-    
+    pos_edges = torch.LongTensor([edge_src, edge_dst]).to(dev)
+
     # Training loop (unsupervised: link reconstruction)
     logger.info(f"Training APPNP for {epochs} epochs...")
     model.train()
-    
+
     best_loss = float('inf')
     patience_counter = 0
     patience = 20
-    
+
     for epoch in range(epochs):
         optimizer.zero_grad()
-        
+
         # Predict step: transform features
         H = model(X_torch)
-        
+
         # Propagate step: differentiable personalized PageRank power iteration
         Z = (1 - alpha) * H
         H_prop = H
         for k in range(K):
             H_prop = adj_dense @ H_prop
             Z = Z + (1 - alpha) * (alpha ** (k + 1)) * H_prop
-        
+
         # Link reconstruction loss: predict edges using dot product
         pos_src_emb = Z[pos_edges[0]]
         pos_dst_emb = Z[pos_edges[1]]
         pos_scores = (pos_src_emb * pos_dst_emb).sum(dim=1)
-        
+
         # Sample negative edges
-        neg_src = torch.randint(0, N, (num_neg_samples,))
-        neg_dst = torch.randint(0, N, (num_neg_samples,))
+        neg_src = torch.randint(0, N, (num_neg_samples,), device=dev)
+        neg_dst = torch.randint(0, N, (num_neg_samples,), device=dev)
         neg_src_emb = Z[neg_src]
         neg_dst_emb = Z[neg_dst]
         neg_scores = (neg_src_emb * neg_dst_emb).sum(dim=1)
-        
+
         # Binary cross-entropy loss
         pos_loss = F.binary_cross_entropy_with_logits(pos_scores, torch.ones_like(pos_scores))
         neg_loss = F.binary_cross_entropy_with_logits(neg_scores, torch.zeros_like(neg_scores))
         loss = pos_loss + neg_loss
-        
+
         loss.backward()
         optimizer.step()
-        
+
         # Early stopping
         if loss.item() < best_loss:
             best_loss = loss.item()
@@ -359,15 +363,15 @@ def generate_appnp_embedding(
             if patience_counter >= patience:
                 logger.info(f"Early stopping at epoch {epoch+1}")
                 break
-        
+
         if (epoch + 1) % 50 == 0:
             logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
-    
+
     # Generate final embeddings
     model.eval()
     with torch.no_grad():
         H = model(X_torch)
-        H_np = H.numpy()
+        H_np = H.cpu().numpy()
         Z_final = personalized_pagerank_propagation(
             H_np, adj_normalized, alpha=alpha, K=K, use_sparse=True
         )
@@ -389,7 +393,8 @@ def run_appnp(
     lr: float = 0.01,
     weight_decay: float = 5e-4,
     epochs: int = 200,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    device: str = "cpu",
 ) -> np.ndarray:
     """
     Run APPNP and return embeddings aligned to `nodes`.
@@ -442,7 +447,8 @@ def run_appnp(
         lr=lr,
         weight_decay=weight_decay,
         epochs=epochs,
-        random_state=seed
+        random_state=seed,
+        device=device,
     )
     
     return embeddings

@@ -75,10 +75,14 @@ if _TORCH:
         lr: float,
         neg_samples: int,
         seed: int,
+        device: str = "cpu",
     ) -> np.ndarray:
         """Train unsupervised GraphSAGE with PyTorch."""
         torch.manual_seed(seed)
         np.random.seed(seed)
+
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu") \
+            if device == "auto" else torch.device(device)
 
         N = len(nodes)
         node_idx = {n: i for i, n in enumerate(nodes)}
@@ -87,7 +91,7 @@ if _TORCH:
         A = nx.to_numpy_array(G, nodelist=nodes, dtype=np.float32)
         D_inv = np.diag(1.0 / (A.sum(axis=1) + 1e-12))
         A_hat = (D_inv @ A).astype(np.float32)
-        adj_t = torch.from_numpy(A_hat)
+        adj_t = torch.from_numpy(A_hat).to(dev)
 
         # ── Initial features: normalised degree + random projection ────────
         deg = np.array([G.degree(n) for n in nodes], dtype=np.float32)
@@ -99,10 +103,10 @@ if _TORCH:
         # Smooth R over 1 hop so initial features carry graph structure
         H0_raw = A_hat @ R + 0.3 * deg_norm[:, None] * R
         H0 = (H0_raw / (np.linalg.norm(H0_raw, axis=1, keepdims=True) + 1e-12))
-        H_t = torch.from_numpy(H0.astype(np.float32))
+        H_t = torch.from_numpy(H0.astype(np.float32)).to(dev)
 
         # ── Model & optimiser ──────────────────────────────────────────────
-        model = _GraphSAGETorch(in_dim, hidden_dim, dimensions, n_layers)
+        model = _GraphSAGETorch(in_dim, hidden_dim, dimensions, n_layers).to(dev)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         # ── Build positive pairs from edges ────────────────────────────────
@@ -113,15 +117,15 @@ if _TORCH:
             # Degenerate graph — return random embedding
             return rng.standard_normal((N, dimensions)).astype(np.float32)
 
-        pos_u = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long)
-        pos_v = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long)
+        pos_u = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long, device=dev)
+        pos_v = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long, device=dev)
 
         # ── Training loop with early stopping ──────────────────────────────
         model.train()
         best_loss = float('inf')
         patience_counter = 0
         patience = 15
-        
+
         for epoch in range(epochs):
             optimizer.zero_grad()
             Z = model(H_t, adj_t)            # (N, dim) L2-normalised
@@ -134,8 +138,8 @@ if _TORCH:
 
             # Negative loss: random non-edge pairs (limit samples for speed)
             num_neg = min(len(pos_pairs) * neg_samples, len(pos_pairs) * 5)
-            neg_u_idx = torch.randint(0, N, (num_neg,))
-            neg_v_idx = torch.randint(0, N, (num_neg,))
+            neg_u_idx = torch.randint(0, N, (num_neg,), device=dev)
+            neg_v_idx = torch.randint(0, N, (num_neg,), device=dev)
             # Filter self-loops (best-effort)
             valid = neg_u_idx != neg_v_idx
             neg_u_idx, neg_v_idx = neg_u_idx[valid], neg_v_idx[valid]
@@ -148,7 +152,7 @@ if _TORCH:
             loss = pos_loss + neg_loss
             loss.backward()
             optimizer.step()
-            
+
             # Early stopping
             if loss.item() < best_loss:
                 best_loss = loss.item()
@@ -160,7 +164,7 @@ if _TORCH:
 
         model.eval()
         with torch.no_grad():
-            Z_final = model(H_t, adj_t).numpy()
+            Z_final = model(H_t, adj_t).cpu().numpy()
         return Z_final.astype(np.float64)
 
 
@@ -231,6 +235,7 @@ def run_graphsage(
     lr: float = 0.01,
     neg_samples: int = 5,
     seed: int = 42,
+    device: str = "cpu",
 ) -> np.ndarray:
     """
     Unsupervised GraphSAGE embedding.
@@ -269,6 +274,7 @@ def run_graphsage(
                 G=graph, nodes=nodes, dimensions=dimensions,
                 hidden_dim=hidden_dim, n_layers=n_layers,
                 epochs=epochs, lr=lr, neg_samples=neg_samples, seed=seed,
+                device=device,
             )
         except Exception as e:
             logger.warning(f"GraphSAGE PyTorch backend failed ({e}); falling back to NumPy")

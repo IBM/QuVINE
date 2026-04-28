@@ -55,6 +55,13 @@ DRY_RUN=false
 SERIAL_MODE=false  # Default: parallel (one job per method × network)
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
 CONFIG_FILE="scripts/unified_tuning_config.yaml"
+USE_GPU=false       # Request GPU nodes for DNN methods
+GPU_MEMORY="32"     # Memory for GPU DNN jobs
+DNN_CPU_MEMORY="48" # Memory for CPU DNN jobs (forces node spreading)
+DNN_NCORES="4"      # CPU cores for DNN jobs (enables multithreading + spreading)
+
+# DNN methods that benefit from GPU and/or separate nodes
+DNN_METHODS=("gat_baseline" "graphgps_baseline" "appnp" "graphsage" "baseline_gcnmf")
 
 # Methods to tune (unified 12-method configuration)
 METHODS=(
@@ -112,10 +119,11 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --dry-run)    DRY_RUN=true;    shift ;;
         --serial)     SERIAL_MODE=true; shift ;;
+        --use-gpu)    USE_GPU=true;     shift ;;
         *)
             echo "Unknown option: $1"
             echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--n-graphs N]"
-            echo "          [--networks NET1,NET2,...] [--methods MET1,MET2,...] [--serial] [--dry-run]"
+            echo "          [--networks NET1,NET2,...] [--methods MET1,MET2,...] [--serial] [--use-gpu] [--dry-run]"
             exit 1 ;;
     esac
 done
@@ -156,9 +164,21 @@ echo " Networks     : ${#NETWORK_TYPES[@]} (${NETWORK_TYPES[*]})"
 echo " Mode         : ${MODE_DESC}"
 echo " Total jobs   : ${TOTAL_JOBS}"
 echo " Dry run      : $DRY_RUN"
+echo " Use GPU      : $USE_GPU (for DNN methods: ${DNN_METHODS[*]})"
 echo "======================================================"
 echo ""
 [ "$DRY_RUN" = true ] && echo "DRY RUN MODE — no jobs will be submitted" && echo ""
+
+# ---------------------------------------------------------------------------
+# Helper: check if a method is a DNN method
+# ---------------------------------------------------------------------------
+is_dnn_method() {
+    local method="$1"
+    for dm in "${DNN_METHODS[@]}"; do
+        [ "$method" = "$dm" ] && return 0
+    done
+    return 1
+}
 
 # ---------------------------------------------------------------------------
 # Submit jobs
@@ -186,6 +206,10 @@ if [ "$SERIAL_MODE" = true ]; then
 
 source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
+
+export OMP_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export OPENBLAS_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export MKL_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
 
 echo "======================================================"
 echo " Tuning: ALL METHODS on ${NET_TYPE} (SERIAL)"
@@ -239,6 +263,26 @@ else
             JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
             RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
 
+            # Determine resource allocation based on method type
+            if is_dnn_method "$METHOD"; then
+                if [ "$USE_GPU" = true ]; then
+                    JOB_MEM="$GPU_MEMORY"
+                    JOB_NCORES=1
+                    GPU_BSUB_LINES='#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -R "select[ngpus_excl_p>0] rusage[ngpus_excl_p=1]"'
+                else
+                    JOB_MEM="$DNN_CPU_MEMORY"
+                    JOB_NCORES="$DNN_NCORES"
+                    GPU_BSUB_LINES='#BSUB -x'  # exclusive node: prevents other jobs sharing this node
+                fi
+                DEVICE_ARG="--device auto"
+            else
+                JOB_MEM="$MEMORY"
+                JOB_NCORES=4  # multi-core for OMP_NUM_THREADS / BLAS speedup
+                GPU_BSUB_LINES=""
+                DEVICE_ARG=""
+            fi
+
             cat > "$JOB_SH" << BSUBEOF
 #!/bin/bash
 #BSUB -J ${JOB_NAME}
@@ -246,11 +290,17 @@ else
 #BSUB -e ${JOB_ERR}
 #BSUB -q ${QUEUE}
 #BSUB -W ${WALLTIME}
-#BSUB -M ${MEMORY}GB
-#BSUB -R "rusage[mem=${MEMORY}GB]"
+#BSUB -n ${JOB_NCORES}
+#BSUB -M ${JOB_MEM}GB
+#BSUB -R "rusage[mem=${JOB_MEM}GB]"
+${GPU_BSUB_LINES}
 
 source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
+
+export OMP_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export OPENBLAS_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export MKL_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
 
 echo "======================================================"
 echo " Tuning: ${METHOD} on ${NET_TYPE}"
@@ -258,6 +308,7 @@ echo "======================================================"
 echo " Start time: \$(date)"
 echo " Config: ${CONFIG_FILE}"
 echo " Output: ${RESULT_FILE}"
+echo " Device: ${DEVICE_ARG:-cpu}"
 echo "======================================================"
 echo ""
 
@@ -266,7 +317,8 @@ python scripts/tune_by_task_with_config.py \\
     --methods ${METHOD} \\
     --network-type ${NET_TYPE} \\
     --n-graphs ${N_GRAPHS} \\
-    --output-dir ${OUTPUT_BASE}
+    --output-dir ${OUTPUT_BASE} \\
+    ${DEVICE_ARG}
 
 EXIT_CODE=\$?
 
