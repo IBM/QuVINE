@@ -1,0 +1,111 @@
+dataset:
+  family: dgl
+  source: dgl.data
+  name: dgl_datasets
+  description: DGL graph datasets including citation networks, co-purchase, co-authorship, and heterophilous graphs
+  categories:
+    citation_networks:
+      - CoraGraphDataset
+      - CiteseerGraphDataset
+      - PubmedGraphDataset
+      - CoraFullDataset
+    co_purchase:
+      - AmazonCoBuyComputerDataset
+      - AmazonCoBuyPhotoDataset
+    co_authorship:
+      - CoauthorPhysicsDataset
+      - CoauthorCSDataset
+    social_networks:
+      - FlickrDataset
+      - YelpDataset
+      - WikiCSDataset
+    heterophilous:
+      - ChameleonDataset
+      - SquirrelDataset
+      - ActorDataset
+      - CornellDataset
+      - TexasDataset
+      - WisconsinDataset
+    additional:
+      - RomanEmpireDataset
+      - AmazonRatingsDataset
+      - MinesweeperDataset
+      - TolokersDataset
+      - QuestionsDataset
+    fraud_detection:
+      - FraudYelpDataset
+      - FraudAmazonDataset
+
+paths:
+  local:
+    raw_dir: data/dgl/raw
+    processed_root: data/dgl/processed
+    notebook: notebooks/dgl_preprocessing.ipynb
+  hpc:
+    data_root: /dccstor/cgq4hls/Q/dgl
+    output_root: /dccstor/cgq4hls/Q/dgl/results
+    hparam_base: /dccstor/boseukb/Q/NetMed/QuVINE/results/hparam_tuning
+
+preprocessing:
+  target_sizes:
+    - 2000
+    - 5000
+    - 10000
+  n_subsamples: 30
+  base_seed: 42
+  restart_prob: 0.15
+  frontier_width: 256
+  degree_weight_power: 0.5
+  local_bfs_expansion: 8
+
+storage_layout:
+  graph_file_format: csv_edgelist
+  graph_columns:
+    - node1
+    - node2
+  metadata_sidecar: json
+  sidecar_arrays:
+    - node_labels.npy
+    - node_features.npy
+    - train_masks.npy
+    - val_masks.npy
+    - test_masks.npy
+  node_index_mapping: node_index.csv
+  manifest: manifest.csv
+
+analysis:
+  methods:
+    - quvine_fused
+    - quvine_ctqw
+    - quvine_dtqw
+    - quvine_rwr
+    - quvine_heat
+    - quvine_poly
+    - quvine_hgcnmf
+    - quvine_pgcnmf
+    - netmf
+    - node2vec
+    - baseline_gcnmf
+    - baseline_filter
+    - graphsage
+  negative_strategy: random
+  base_seed: 42
+  default_seed_pct: 10
+  default_target_pct: 10
+  use_node_features: true
+  use_node_labels: true
+  preserve_original_splits: true
+
+lsf:
+  queue: normal
+  walltime: "72:00"
+  memory_gb: 16
+  aggregation_memory_gb: 24
+  python_env: /u/futro/envs/py311/bin/activate
+
+notes: |
+  DGL datasets are diverse graph collections from Deep Graph Library.
+  Subgraph sampling is used to create manageable graph sizes for comprehensive analysis.
+  Many DGL graphs have node features, labels, and train/val/test splits which are preserved.
+
+# Made with Bob
