@@ -1,0 +1,49 @@
+{
+  "quvine_walks": {
+    "node_classification": {
+      "best_params": {
+        "embedding_dim": 256,
+        "num_views": 6,
+        "walk_length": 40,
+        "num_walks": 80,
+        "window_size": 15,
+        "negative_samples": 5,
+        "epochs": 50,
+        "restart_prob": 0.2,
+        "max_degree": 100,
+        "degree_alpha": 0.7
+      },
+      "best_score": 0.3237366915620531
+    },
+    "link_prediction": {
+      "best_params": {
+        "embedding_dim": 128,
+        "num_views": 6,
+        "walk_length": 40,
+        "num_walks": 80,
+        "window_size": 20,
+        "negative_samples": 10,
+        "epochs": 10,
+        "restart_prob": 0.15,
+        "max_degree": 50,
+        "degree_alpha": 0.5
+      },
+      "best_score": 0.650462962962963
+    },
+    "node_ranking": {
+      "best_params": {
+        "embedding_dim": 128,
+        "num_views": 6,
+        "walk_length": 40,
+        "num_walks": 20,
+        "window_size": 15,
+        "negative_samples": 20,
+        "epochs": 10,
+        "restart_prob": 0.1,
+        "max_degree": 100,
+        "degree_alpha": 0.5
+      },
+      "best_score": 0.4266666666666667
+    }
+  }
+}

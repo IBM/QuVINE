@@ -159,19 +159,19 @@ optuna:
     n_warmup_steps: 10
     interval_steps: 1
   
-  # Method-specific trial multipliers (based on parameter complexity)
-  # Calculated as: num_params × avg_choices_per_param × complexity_factor
+  # Method-specific trial counts (optimized to reduce >5 hour jobs)
+  # Reduced from original values to balance quality vs. runtime
   method_trials:
-    quvine_walks: 100        # 10 params × ~5 choices × high complexity
-    baseline_filter_heat: 30  # 3 params × ~6 choices × simple
-    baseline_filter_poly: 40  # 3 params × ~8 choices × simple
-    baseline_gcnmf: 60       # 6 params × ~5 choices × medium
-    node2vec: 80             # 8 params × ~5 choices × medium
-    netmf: 40                # 4 params × ~5 choices × simple
-    graphsage: 80            # 8 params × ~5 choices × medium
-    appnp: 80                # 8 params × ~5 choices × medium
-    gat_baseline: 100        # 9 params × ~5 choices × high complexity
-    graphgps_baseline: 120   # 10 params × ~5 choices × high complexity
+    quvine_walks: 50              # Reduced from 100 (was 5-7 hours → now 2.5-3.5 hours)
+    baseline_filter_heat: 30      # Kept at 30 (already optimal: 30-60 min)
+    baseline_filter_poly: 40      # Kept at 40 (already optimal: 40-80 min)
+    baseline_gcnmf: 40            # Reduced from 60 (was 3-4 hours → now 2-2.5 hours)
+    node2vec: 50                  # Reduced from 80 (was 4-5 hours → now 2.5-3 hours)
+    netmf: 30                     # Reduced from 40 (was 1.5-2 hours → now 1-1.5 hours)
+    graphsage: 40                 # Reduced from 80 (was 5-7 hours → now 2.5-3.5 hours)
+    appnp: 50                     # Reduced from 80 (was 4-5 hours → now 2.5-3 hours)
+    gat_baseline: 50              # Reduced from 100 (was 7-8 hours → now 3.5-4 hours)
+    graphgps_baseline: 50         # Reduced from 120 (was 10-12 hours → now 4-5 hours)
 
 # ============================================================================
 # EXPERIMENT SETTINGS

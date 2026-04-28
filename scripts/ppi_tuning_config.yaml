@@ -1,0 +1,298 @@
+# PPI Network Hyperparameter Tuning Configuration
+# Tunes hyperparameters for 5 PPI networks × 3 diseases × 3 tasks
+# Networks: STRING, BioPlex3, HumanNet, PCNet, ProteomeHD
+# Diseases: asthma, autism, schizophrenia
+# Tasks: node_ranking (GWAS), node_classification (7 strategies), link_prediction (hadamard)
+
+# ============================================================================
+# FIXED PARAMETERS (PPI-specific)
+# ============================================================================
+fixed_params:
+  # PPI network subsampling
+  graph:
+    n_nodes: 200  # Subsample to 200 nodes for tuning
+    radius: 2  # K-hop radius for seed/target neighborhood
+    degree_matched_fill: true  # Use degree-matched sampling
+    degree_matched_trim: true  # Trim with degree matching
+  
+  # Evaluation settings
+  evaluation:
+    node_classification:
+      test_size: 0.3  # 70/30 train/test split
+      n_label_strategies: 7  # All 7 label generation strategies
+      metric: "f1_macro"
+    
+    link_prediction:
+      test_ratio: 0.2  # Hold out 20% of edges
+      edge_feature_method: "hadamard"  # Hadamard product for edge features
+      metric: "auc_roc"
+    
+    node_ranking:
+      # Use GWAS seeds and targets directly (no k-hop generation)
+      metric: "recall_at_50"  # Recall@50 for ranking
+      top_k: 50  # Top-K nodes to consider
+  
+  # Training settings
+  training:
+    random_seed: 42
+    device: "cpu"  # or "cuda" for GPU
+
+# ============================================================================
+# PPI NETWORK PATHS
+# ============================================================================
+ppi_networks:
+  STRING:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/STRING/edges_list_ncbi.csv"
+    full_size: 19354  # Approximate full network size
+  
+  BioPlex3:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/BioPlex3_shared/edges_list_ncbi.csv"
+    full_size: 15435
+  
+  HumanNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/HumanNetV3/edges_list_ncbi.csv"
+    full_size: 21238
+  
+  PCNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/PCNet/edges_list_ncbi.csv"
+    full_size: 19781
+  
+  ProteomeHD:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/ProteomeHD/edges_list_ncbi.csv"
+    full_size: 9792
+
+# ============================================================================
+# DISEASE GWAS DATA PATHS
+# ============================================================================
+diseases:
+  asthma:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/asthma_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/asthma_targets_ncbi_gwas_catalog.json"
+  
+  autism:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/autism_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/autism_targets_ncbi_gwas_catalog.json"
+  
+  schizophrenia:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/schizophrenia_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/schizophrenia_targets_ncbi_gwas_catalog.json"
+
+# ============================================================================
+# HYPERPARAMETER SEARCH SPACES (Per Method)
+# Same as synthetic networks but optimized for PPI characteristics
+# ============================================================================
+hyperparameters:
+  
+  # --------------------------------------------------------------------------
+  # QuVINE Quantum Methods
+  # --------------------------------------------------------------------------
+  quvine_fused:
+    embedding_dim: [64, 128, 256]
+    num_views: [3, 4, 5]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    restart_prob: [0.1, 0.15, 0.2]
+    max_degree: [50, 100, 200]
+    degree_alpha: [0.3, 0.5, 0.7]
+  
+  quvine_ctqw:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    tau: [0.5, 1.0, 2.0, 5.0]  # CTQW time parameter
+  
+  quvine_dtqw:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    steps: [10, 20, 40]  # DTQW steps
+  
+  quvine_rwr:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 60]
+    num_walks: [20, 40, 80]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [10, 20, 50]
+    restart_prob: [0.1, 0.15, 0.2, 0.3]
+  
+  quvine_heat:
+    embedding_dim: [64, 128, 256]
+    tau: [0.5, 1.0, 2.0, 5.0, 10.0]
+    filter_order: [3, 4, 5, 6, 8]
+  
+  quvine_poly:
+    embedding_dim: [64, 128, 256]
+    filter_order: [3, 4, 5, 6, 8, 10]
+    alpha: [0.1, 0.3, 0.5, 0.7]
+  
+  quvine_hgcnmf:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    mf_dim: [32, 64, 128]
+    n_layers: [2, 3, 4]
+    epochs: [100, 200, 300]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    tau: [0.5, 1.0, 2.0, 5.0]
+  
+  quvine_pgcnmf:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    mf_dim: [32, 64, 128]
+    n_layers: [2, 3, 4]
+    epochs: [100, 200, 300]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+    filter_order: [3, 4, 5, 6]
+    alpha: [0.1, 0.3, 0.5]
+  
+  # --------------------------------------------------------------------------
+  # Classical Baselines
+  # --------------------------------------------------------------------------
+  netmf:
+    embedding_dim: [64, 128, 256]
+    window_size: [5, 10, 15, 20]
+    rank: [64, 128, 256, 512]
+    negative_samples: [5, 10, 20]
+  
+  node2vec:
+    embedding_dim: [64, 128, 256]
+    walk_length: [20, 40, 80]
+    num_walks: [20, 40, 80]
+    p: [0.5, 1.0, 2.0, 4.0]
+    q: [0.5, 1.0, 2.0, 4.0]
+    window_size: [5, 10, 15]
+    negative_samples: [5, 10, 20]
+    epochs: [5, 10, 20]
+  
+  baseline_gcnmf:
+    embedding_dim: [64, 128, 256]
+    hidden_dim: [64, 128, 256]
+    mf_dim: [32, 64, 128]
+    n_layers: [2, 3, 4]
+    epochs: [100, 200, 300]
+    learning_rate: [0.001, 0.005, 0.01]
+    weight_decay: [1e-5, 5e-5, 1e-4]
+  
+  baseline_filter:
+    embedding_dim: [64, 128, 256]
+    filter_type: ["heat", "poly"]
+    tau: [0.5, 1.0, 2.0, 5.0]  # For heat filter
+    filter_order: [3, 4, 5, 6, 8]
+    alpha: [0.1, 0.3, 0.5, 0.7]  # For poly filter
+  
+  graphsage:
+    embedding_dim: [64, 128, 256]
+    n_layers: [2, 3, 4]
+    hidden_dim: [64, 128, 256]
+    aggregator: ["mean", "gcn", "pool"]
+    dropout: [0.0, 0.1, 0.3]
+    learning_rate: [0.001, 0.005, 0.01]
+    epochs: [50, 100, 200]
+    batch_size: [32, 64, 128]
+
+# ============================================================================
+# OPTUNA SETTINGS
+# ============================================================================
+optuna:
+  adaptive_trials: true
+  base_trials: 50
+  n_startup_trials: 10
+  sampler: "TPE"
+  pruner: "MedianPruner"
+  pruner_params:
+    n_startup_trials: 5
+    n_warmup_steps: 10
+    interval_steps: 1
+  
+  # Method-specific trial counts (optimized to reduce >5 hour jobs)
+  # Reduced from original values to balance quality vs. runtime
+  method_trials:
+    quvine_fused: 50      # Reduced from 100 (was 5-7 hours → now 2.5-3.5 hours)
+    quvine_ctqw: 40       # Reduced from 80 (was 2.5-4 hours → now 1.5-2 hours)
+    quvine_dtqw: 40       # Reduced from 80 (was 2.5-4 hours → now 1.5-2 hours)
+    quvine_rwr: 40        # Reduced from 80 (was 2.5-4 hours → now 1.5-2 hours)
+    quvine_heat: 40       # Kept at 40 (already optimal: 40-80 min)
+    quvine_poly: 40       # Kept at 40 (already optimal: 40-80 min)
+    quvine_hgcnmf: 40     # Reduced from 80 (was 5-7 hours → now 2.5-3.5 hours)
+    quvine_pgcnmf: 40     # Reduced from 80 (was 5-7 hours → now 2.5-3.5 hours)
+    netmf: 30             # Reduced from 50 (was 1.5-2.5 hours → now 1-1.5 hours)
+    node2vec: 50          # Reduced from 80 (was 4-5 hours → now 2.5-3 hours)
+    baseline_gcnmf: 40    # Reduced from 60 (was 3-4 hours → now 2-2.5 hours)
+    baseline_filter: 30   # Reduced from 50 (was 50-100 min → now 30-60 min)
+    graphsage: 40         # Reduced from 80 (was 5-7 hours → now 2.5-3.5 hours)
+
+# ============================================================================
+# EXPERIMENT SETTINGS
+# ============================================================================
+experiment:
+  # Number of replicates per network-disease combination
+  n_replicates: 3  # Use 3 different subsampling seeds
+  
+  # Networks to tune (all 5 PPI networks)
+  networks: ["STRING", "BioPlex3", "HumanNet", "PCNet", "ProteomeHD"]
+  
+  # Diseases to tune (all 3)
+  diseases: ["asthma", "autism", "schizophrenia"]
+  
+  # Tasks to optimize
+  tasks: ["node_ranking", "node_classification", "link_prediction"]
+  
+  # Output directory
+  output_dir: "ppi_tuning_by_task"
+  
+  # Logging
+  log_level: "INFO"
+  save_study: true
+  
+  # Parallel jobs (1 = sequential)
+  parallel_jobs: 1
+
+# ============================================================================
+# METHOD SELECTION
+# ============================================================================
+methods:
+  quantum:
+    - quvine_fused
+    - quvine_ctqw
+    - quvine_dtqw
+    - quvine_rwr
+    - quvine_heat
+    - quvine_poly
+    - quvine_hgcnmf
+    - quvine_pgcnmf
+  
+  classical:
+    - netmf
+    - node2vec
+    - baseline_gcnmf
+    - baseline_filter
+    - graphsage
+  
+  # All 13 methods from PPI job script
+  all:
+    - quvine_fused
+    - quvine_ctqw
+    - quvine_dtqw
+    - quvine_rwr
+    - quvine_heat
+    - quvine_poly
+    - quvine_hgcnmf
+    - quvine_pgcnmf
+    - netmf
+    - node2vec
+    - baseline_gcnmf
+    - baseline_filter
+    - graphsage
+
+# Made with Bob

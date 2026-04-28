@@ -955,7 +955,18 @@ def main():
                 return obj
         
         results_native = convert_to_native(results)
-        output_file = os.path.join(output_dir, f"{network_type}_tuning_by_task.json")
+        
+        # Determine output file name based on number of methods
+        # - Single method (parallel mode): save to method-specific file
+        # - Multiple methods (serial mode): save to combined file
+        if len(methods) == 1:
+            # Single method: save to method-specific file to avoid overwrites in parallel execution
+            method_name = methods[0]
+            output_file = os.path.join(output_dir, f"{network_type}_{method_name}_tuning_by_task.json")
+        else:
+            # Multiple methods: save to combined file (serial execution)
+            output_file = os.path.join(output_dir, f"{network_type}_tuning_by_task.json")
+        
         with open(output_file, 'w') as f:
             json.dump(results_native, f, indent=2)
         logger.info(f"\nSaved results to {output_file}")
