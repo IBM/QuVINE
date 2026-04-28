@@ -1,0 +1,233 @@
+# Quick Test Configuration for Hyperparameter Tuning
+# Uses n_trials=5 for fast validation (15-30 min per job vs 4-5 hours)
+# 
+# Test Coverage:
+# - Synthetic: 2 networks (erdos_renyi, modular) × 12 methods = 24 jobs
+# - PPI: 2 networks (STRING, BioPlex3) × 1 disease (asthma) × 12 methods = 24 jobs
+# - Total: 48 tuning jobs + 2 aggregation jobs = 50 jobs
+# - Expected runtime: ~30-60 minutes total (parallelized)
+
+# ============================================================================
+# FIXED PARAMETERS
+# ============================================================================
+fixed_params:
+  # Graph settings (for synthetic networks)
+  graph:
+    n_nodes: 200
+    erdos_renyi:
+      p: 0.1
+    modular:
+      n_communities: 4
+      p_in: 0.3
+      p_out: 0.05
+  
+  # PPI subsampling settings
+  ppi:
+    n_nodes: 200
+    radius: 2
+    degree_matched_fill: true
+    degree_matched_trim: true
+  
+  # Evaluation settings
+  evaluation:
+    node_classification:
+      test_size: 0.3
+      n_label_strategies: 7
+      metric: "f1_macro"
+    
+    link_prediction:
+      test_ratio: 0.2
+      edge_feature_method: "hadamard"
+      metric: "auc_roc"
+    
+    node_ranking:
+      k_hops: 2
+      top_k: 50
+      metric: "recall_at_50"
+  
+  # Training settings
+  training:
+    random_seed: 42
+    device: "cpu"
+
+# ============================================================================
+# PPI NETWORK PATHS
+# ============================================================================
+ppi_networks:
+  STRING:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/STRING/edges_list_ncbi.csv"
+    full_size: 19354
+  
+  BioPlex3:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/BioPlex3_shared/edges_list_ncbi.csv"
+    full_size: 15435
+  
+  HumanNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/HumanNetV3/edges_list_ncbi.csv"
+    full_size: 21238
+  
+  PCNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/PCNet/edges_list_ncbi.csv"
+    full_size: 19781
+  
+  ProteomeHD:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/ProteomeHD/edges_list_ncbi.csv"
+    full_size: 9792
+
+# ============================================================================
+# DISEASE GWAS DATA PATHS
+# ============================================================================
+diseases:
+  asthma:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/asthma_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/asthma_targets_ncbi_gwas_catalog.json"
+  
+  autism:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/autism_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/autism_targets_ncbi_gwas_catalog.json"
+  
+  schizophrenia:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/schizophrenia_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/schizophrenia_targets_ncbi_gwas_catalog.json"
+
+# ============================================================================
+# EXPERIMENT SETTINGS
+# ============================================================================
+experiment:
+  output_dir: "ppi_tuning_by_task"
+  log_level: "INFO"
+
+# ============================================================================
+# HYPERPARAMETER SEARCH SPACES (12 Methods, n_trials=5 for quick test)
+# ============================================================================
+hyperparameters:
+  
+  # --------------------------------------------------------------------------
+  # QuVINE Quantum Walk Variants (3 methods)
+  # --------------------------------------------------------------------------
+  quvine_rwr:
+    n_trials: 2  # Quick test (normally 30)
+    embedding_dim: [32, 64, 128]
+    num_views: [3, 4, 5]
+    walk_length: [10, 20, 30]
+    num_walks: [50, 100]
+    p: [0.5, 1.0, 2.0]
+    q: [0.5, 1.0, 2.0]
+    window_size: [5, 10]
+    workers: [4]
+    epochs: [5, 10]
+  
+  quvine_ctqw:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    num_views: [3, 4, 5]
+    walk_length: [10, 20, 30]
+    num_walks: [50, 100]
+    time: [1.0, 2.0, 5.0]
+    window_size: [5, 10]
+    workers: [4]
+    epochs: [5, 10]
+  
+  quvine_dtqw:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    num_views: [3, 4, 5]
+    walk_length: [10, 20, 30]
+    num_walks: [50, 100]
+    coin_type: ["grover", "hadamard"]
+    window_size: [5, 10]
+    workers: [4]
+    epochs: [5, 10]
+  
+  # --------------------------------------------------------------------------
+  # Classical Filter Baselines (2 methods)
+  # --------------------------------------------------------------------------
+  baseline_filter_heat:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    time: [1.0, 2.0, 5.0]
+  
+  baseline_filter_poly:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    order: [2, 3, 4, 5]
+  
+  # --------------------------------------------------------------------------
+  # Classical GCN-MF Baseline (1 method)
+  # --------------------------------------------------------------------------
+  baseline_gcnmf:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    num_layers: [2, 3]
+    dropout: [0.0, 0.1, 0.3]
+    learning_rate: [0.001, 0.01]
+    weight_decay: [0.0, 0.0001, 0.001]
+    epochs: [50, 100]
+  
+  # --------------------------------------------------------------------------
+  # GNN Baselines with Quantum Calibration (2 methods)
+  # --------------------------------------------------------------------------
+  gat_baseline:
+    n_trials: 2
+    hidden_dim: [32, 64]
+    num_layers: [2, 3]
+    num_heads: [4, 8]
+    dropout: [0.1, 0.3]
+    learning_rate: [0.001, 0.01]
+    weight_decay: [0.0001, 0.001]
+    epochs: [50, 100]
+  
+  graphgps_baseline:
+    n_trials: 2
+    hidden_dim: [32, 64]
+    num_layers: [2, 3]
+    num_heads: [4, 8]
+    dropout: [0.1, 0.3]
+    attn_dropout: [0.1, 0.3]
+    learning_rate: [0.001, 0.01]
+    weight_decay: [0.0001, 0.001]
+    epochs: [50, 100]
+  
+  # --------------------------------------------------------------------------
+  # Classical GNN/Embedding Baselines (4 methods)
+  # --------------------------------------------------------------------------
+  node2vec:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    walk_length: [10, 20, 30]
+    num_walks: [50, 100]
+    p: [0.5, 1.0, 2.0]
+    q: [0.5, 1.0, 2.0]
+    window_size: [5, 10]
+    workers: [4]
+    epochs: [5, 10]
+  
+  netmf:
+    n_trials: 2
+    embedding_dim: [32, 64, 128]
+    window_size: [5, 10]
+    negative: [1, 5]
+    rank: [128, 256]
+  
+  graphsage:
+    n_trials: 2
+    hidden_dim: [32, 64]
+    num_layers: [2, 3]
+    aggregator_type: ["mean", "gcn", "pool"]
+    dropout: [0.0, 0.1, 0.3]
+    learning_rate: [0.001, 0.01]
+    weight_decay: [0.0, 0.0001]
+    epochs: [50, 100]
+  
+  appnp:
+    n_trials: 2
+    hidden_dim: [32, 64]
+    num_layers: [2, 3]
+    alpha: [0.1, 0.15, 0.2]
+    k: [5, 10]
+    dropout: [0.1, 0.3, 0.5]
+    learning_rate: [0.001, 0.01]
+    weight_decay: [0.0001, 0.001]
+    epochs: [50, 100]
+
+# Made with Bob

@@ -461,4 +461,3 @@ echo " Monitor: bjobs -u \$USER"
 echo " Results: ${OUTPUT_BASE}/"
 echo "======================================================"
 
-# Made with Bob

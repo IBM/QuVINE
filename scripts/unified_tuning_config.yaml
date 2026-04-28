@@ -15,6 +15,12 @@ fixed_params:
   # Graph settings (for synthetic networks)
   graph:
     n_nodes: 200
+    erdos_renyi:
+      p: 0.1  # Edge probability
+    modular:
+      n_communities: 4
+      p_in: 0.3  # Intra-community edge probability
+      p_out: 0.05  # Inter-community edge probability
   
   # PPI subsampling settings
   ppi:
@@ -44,6 +50,53 @@ fixed_params:
   training:
     random_seed: 42
     device: "cpu"
+
+# ============================================================================
+# PPI NETWORK PATHS
+# ============================================================================
+ppi_networks:
+  STRING:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/STRING/edges_list_ncbi.csv"
+    full_size: 19354
+  
+  BioPlex3:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/BioPlex3_shared/edges_list_ncbi.csv"
+    full_size: 15435
+  
+  HumanNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/HumanNetV3/edges_list_ncbi.csv"
+    full_size: 21238
+  
+  PCNet:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/PCNet/edges_list_ncbi.csv"
+    full_size: 19781
+  
+  ProteomeHD:
+    path: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/networks/ProteomeHD/edges_list_ncbi.csv"
+    full_size: 9792
+
+# ============================================================================
+# DISEASE GWAS DATA PATHS
+# ============================================================================
+diseases:
+  asthma:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/asthma_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/asthma_targets_ncbi_gwas_catalog.json"
+  
+  autism:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/autism_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/autism_targets_ncbi_gwas_catalog.json"
+  
+  schizophrenia:
+    seeds: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gene_seeds/schizophrenia_ncbi_seeds.json"
+    targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/schizophrenia_targets_ncbi_gwas_catalog.json"
+
+# ============================================================================
+# EXPERIMENT SETTINGS
+# ============================================================================
+experiment:
+  output_dir: "ppi_tuning_by_task"
+  log_level: "INFO"
 
 # ============================================================================
 # HYPERPARAMETER SEARCH SPACES (12 Methods)
@@ -294,4 +347,3 @@ methods:
     - graphsage
     - appnp
 
-# Made with Bob

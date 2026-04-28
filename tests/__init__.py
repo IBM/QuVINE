@@ -14,4 +14,3 @@
 
 """QuVINE test suite."""
 
-# Made with Bob

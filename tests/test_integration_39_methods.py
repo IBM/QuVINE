@@ -409,4 +409,3 @@ if __name__ == '__main__':
     # To run all tests including slow ones:
     # pytest.main([__file__, '-v'])
 
-# Made with Bob
