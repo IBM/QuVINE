@@ -18,7 +18,7 @@ set -e
 # Configuration (match original script)
 # ---------------------------------------------------------------------------
 QUEUE="normal"
-WALLTIME="48:00"
+WALLTIME="96:00"
 MEMORY="32"
 N_GRAPHS="10"
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
