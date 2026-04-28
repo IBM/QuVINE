@@ -1,17 +1,15 @@
 #!/bin/bash
 ################################################################################
-# Submit Remaining Hyperparameter Tuning Jobs
+# Submit Remaining Hyperparameter Tuning Jobs (Version 2)
 # 
-# This script submits only the jobs that were not completed in the previous run.
-# Based on the last submitted job: tune_graphgps_baseline_erdos_renyi (1357352)
+# This script submits only the jobs that were not completed in previous runs.
+# Based on the last submitted job: tune_netmf_modular_medium (1357397)
 #
 # Remaining jobs:
-# - graphgps_baseline: 15 networks (all except erdos_renyi)
-# - node2vec: 16 networks (all)
-# - netmf: 16 networks (all)
+# - netmf: 9 networks (modular_many_communities through configuration_model)
 # - graphsage: 16 networks (all)
 # - appnp: 16 networks (all)
-# Total: 79 jobs
+# Total: 41 jobs
 ################################################################################
 
 set -e
@@ -20,7 +18,7 @@ set -e
 # Configuration (match original script)
 # ---------------------------------------------------------------------------
 QUEUE="normal"
-WALLTIME="96:00"
+WALLTIME="48:00"
 MEMORY="32"
 N_GRAPHS="10"
 PYTHON_ENV="../Python-3.12.2/venv_quvine/bin/activate"
@@ -32,15 +30,6 @@ DNN_NCORES="4"
 
 # DNN methods
 DNN_METHODS=("gat_baseline" "graphgps_baseline" "appnp" "graphsage" "baseline_gcnmf")
-
-# Remaining methods to submit
-METHODS=(
-    "graphgps_baseline"  # 15 networks remaining
-    "node2vec"           # 16 networks
-    "netmf"              # 16 networks
-    "graphsage"          # 16 networks
-    "appnp"              # 16 networks
-)
 
 # All network types
 ALL_NETWORKS=(
@@ -62,13 +51,8 @@ ALL_NETWORKS=(
     "configuration_model"
 )
 
-# Networks remaining for graphgps_baseline (all except erdos_renyi)
-GRAPHGPS_NETWORKS=(
-    "watts_strogatz_high_p"
-    "watts_strogatz_low_p"
-    "random_geometric"
-    "modular_strong"
-    "modular_medium"
+# Networks remaining for netmf (starting from modular_many_communities)
+NETMF_NETWORKS=(
     "modular_many_communities"
     "core_periphery"
     "scale_free"
@@ -106,7 +90,7 @@ is_dnn_method() {
 # Banner
 # ---------------------------------------------------------------------------
 echo "======================================================"
-echo " Submitting Remaining Hyperparameter Tuning Jobs"
+echo " Submitting Remaining Hyperparameter Tuning Jobs (v2)"
 echo "======================================================"
 echo " Project dir  : $PROJECT_DIR"
 echo " Output dir   : $OUTPUT_BASE"
@@ -117,12 +101,10 @@ echo " Memory       : ${MEMORY}GB"
 echo " Graphs/trial : ${N_GRAPHS}"
 echo ""
 echo " Remaining methods:"
-echo "   - graphgps_baseline: 15 networks"
-echo "   - node2vec: 16 networks"
-echo "   - netmf: 16 networks"
-echo "   - graphsage: 16 networks"
-echo "   - appnp: 16 networks"
-echo " Total jobs   : 79"
+echo "   - netmf: 9 networks (modular_many_communities onwards)"
+echo "   - graphsage: 16 networks (all)"
+echo "   - appnp: 16 networks (all)"
+echo " Total jobs   : 41"
 echo "======================================================"
 echo ""
 
@@ -132,42 +114,104 @@ echo ""
 JOB_IDS=()
 JOB_COUNT=0
 
-for METHOD in "${METHODS[@]}"; do
-    # Determine which networks to process for this method
-    if [ "$METHOD" = "graphgps_baseline" ]; then
-        NETWORK_TYPES=("${GRAPHGPS_NETWORKS[@]}")
+# Submit netmf remaining jobs
+echo "Submitting netmf jobs..."
+for NET_TYPE in "${NETMF_NETWORKS[@]}"; do
+    METHOD="netmf"
+    JOB_NAME="tune_${METHOD}_${NET_TYPE}"
+    JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+    JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+    JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+    RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
+
+    JOB_MEM="$MEMORY"
+    JOB_NCORES=4
+    GPU_BSUB_LINES=""
+    DEVICE_ARG=""
+
+    cat > "$JOB_SH" << BSUBEOF
+#!/bin/bash
+#BSUB -J ${JOB_NAME}
+#BSUB -o ${JOB_OUT}
+#BSUB -e ${JOB_ERR}
+#BSUB -q ${QUEUE}
+#BSUB -W ${WALLTIME}
+#BSUB -n ${JOB_NCORES}
+#BSUB -M ${JOB_MEM}GB
+#BSUB -R "rusage[mem=${JOB_MEM}GB]"
+
+source ${PROJECT_DIR}/${PYTHON_ENV}
+cd ${PROJECT_DIR}
+
+export OMP_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export OPENBLAS_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export MKL_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+
+echo "======================================================"
+echo " Tuning: ${METHOD} on ${NET_TYPE}"
+echo "======================================================"
+echo " Start time: \$(date)"
+echo " Config: ${CONFIG_FILE}"
+echo " Output: ${RESULT_FILE}"
+echo "======================================================"
+echo ""
+
+python scripts/tune_by_task_with_config.py \\
+    --config ${CONFIG_FILE} \\
+    --methods ${METHOD} \\
+    --network-type ${NET_TYPE} \\
+    --n-graphs ${N_GRAPHS} \\
+    --output-dir ${OUTPUT_BASE}
+
+EXIT_CODE=\$?
+
+echo ""
+echo "======================================================"
+echo " Tuning complete: ${METHOD} on ${NET_TYPE}"
+echo " Exit code: \$EXIT_CODE"
+echo " End time: \$(date)"
+echo "======================================================"
+
+exit \$EXIT_CODE
+BSUBEOF
+
+    chmod +x "$JOB_SH"
+
+    JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+    if [ -n "$JOB_ID" ]; then
+        echo "  Submitted $JOB_ID: $JOB_NAME"
+        JOB_IDS+=("$JOB_ID")
+        JOB_COUNT=$((JOB_COUNT + 1))
     else
-        NETWORK_TYPES=("${ALL_NETWORKS[@]}")
+        echo "  ERROR: failed to submit $JOB_NAME"
     fi
-    
-    for NET_TYPE in "${NETWORK_TYPES[@]}"; do
-        JOB_NAME="tune_${METHOD}_${NET_TYPE}"
-        JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
-        JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
-        JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
-        RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
+done
 
-        # Determine resource allocation based on method type
-        if is_dnn_method "$METHOD"; then
-            if [ "$USE_GPU" = true ]; then
-                JOB_MEM="$GPU_MEMORY"
-                JOB_NCORES=1
-                GPU_BSUB_LINES='#BSUB -gpu "num=1:mode=exclusive_process"
+# Submit graphsage jobs
+echo ""
+echo "Submitting graphsage jobs..."
+for NET_TYPE in "${ALL_NETWORKS[@]}"; do
+    METHOD="graphsage"
+    JOB_NAME="tune_${METHOD}_${NET_TYPE}"
+    JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+    JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+    JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+    RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
+
+    # graphsage is a DNN method
+    if [ "$USE_GPU" = true ]; then
+        JOB_MEM="$GPU_MEMORY"
+        JOB_NCORES=1
+        GPU_BSUB_LINES='#BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "select[ngpus_excl_p>0] rusage[ngpus_excl_p=1]"'
-            else
-                JOB_MEM="$DNN_CPU_MEMORY"
-                JOB_NCORES="$DNN_NCORES"
-                GPU_BSUB_LINES='#BSUB -x'
-            fi
-            DEVICE_ARG="--device auto"
-        else
-            JOB_MEM="$MEMORY"
-            JOB_NCORES=4
-            GPU_BSUB_LINES=""
-            DEVICE_ARG=""
-        fi
+    else
+        JOB_MEM="$DNN_CPU_MEMORY"
+        JOB_NCORES="$DNN_NCORES"
+        GPU_BSUB_LINES='#BSUB -x'
+    fi
+    DEVICE_ARG="--device auto"
 
-        cat > "$JOB_SH" << BSUBEOF
+    cat > "$JOB_SH" << BSUBEOF
 #!/bin/bash
 #BSUB -J ${JOB_NAME}
 #BSUB -o ${JOB_OUT}
@@ -192,7 +236,7 @@ echo "======================================================"
 echo " Start time: \$(date)"
 echo " Config: ${CONFIG_FILE}"
 echo " Output: ${RESULT_FILE}"
-echo " Device: ${DEVICE_ARG:-cpu}"
+echo " Device: ${DEVICE_ARG}"
 echo "======================================================"
 echo ""
 
@@ -216,28 +260,112 @@ echo "======================================================"
 exit \$EXIT_CODE
 BSUBEOF
 
-        chmod +x "$JOB_SH"
+    chmod +x "$JOB_SH"
 
-        JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
-        if [ -n "$JOB_ID" ]; then
-            echo "  Submitted $JOB_ID: $JOB_NAME"
-            JOB_IDS+=("$JOB_ID")
-            JOB_COUNT=$((JOB_COUNT + 1))
-        else
-            echo "  ERROR: failed to submit $JOB_NAME"
-        fi
-    done
+    JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+    if [ -n "$JOB_ID" ]; then
+        echo "  Submitted $JOB_ID: $JOB_NAME"
+        JOB_IDS+=("$JOB_ID")
+        JOB_COUNT=$((JOB_COUNT + 1))
+    else
+        echo "  ERROR: failed to submit $JOB_NAME"
+    fi
+done
+
+# Submit appnp jobs
+echo ""
+echo "Submitting appnp jobs..."
+for NET_TYPE in "${ALL_NETWORKS[@]}"; do
+    METHOD="appnp"
+    JOB_NAME="tune_${METHOD}_${NET_TYPE}"
+    JOB_OUT="${LOG_DIR}/${JOB_NAME}.out"
+    JOB_ERR="${LOG_DIR}/${JOB_NAME}.err"
+    JOB_SH="${LOG_DIR}/${JOB_NAME}.sh"
+    RESULT_FILE="${OUTPUT_BASE}/${NET_TYPE}_${METHOD}_tuning_by_task.json"
+
+    # appnp is a DNN method
+    if [ "$USE_GPU" = true ]; then
+        JOB_MEM="$GPU_MEMORY"
+        JOB_NCORES=1
+        GPU_BSUB_LINES='#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -R "select[ngpus_excl_p>0] rusage[ngpus_excl_p=1]"'
+    else
+        JOB_MEM="$DNN_CPU_MEMORY"
+        JOB_NCORES="$DNN_NCORES"
+        GPU_BSUB_LINES='#BSUB -x'
+    fi
+    DEVICE_ARG="--device auto"
+
+    cat > "$JOB_SH" << BSUBEOF
+#!/bin/bash
+#BSUB -J ${JOB_NAME}
+#BSUB -o ${JOB_OUT}
+#BSUB -e ${JOB_ERR}
+#BSUB -q ${QUEUE}
+#BSUB -W ${WALLTIME}
+#BSUB -n ${JOB_NCORES}
+#BSUB -M ${JOB_MEM}GB
+#BSUB -R "rusage[mem=${JOB_MEM}GB]"
+${GPU_BSUB_LINES}
+
+source ${PROJECT_DIR}/${PYTHON_ENV}
+cd ${PROJECT_DIR}
+
+export OMP_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export OPENBLAS_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+export MKL_NUM_THREADS=\${LSB_DJOB_NUMPROC:-4}
+
+echo "======================================================"
+echo " Tuning: ${METHOD} on ${NET_TYPE}"
+echo "======================================================"
+echo " Start time: \$(date)"
+echo " Config: ${CONFIG_FILE}"
+echo " Output: ${RESULT_FILE}"
+echo " Device: ${DEVICE_ARG}"
+echo "======================================================"
+echo ""
+
+python scripts/tune_by_task_with_config.py \\
+    --config ${CONFIG_FILE} \\
+    --methods ${METHOD} \\
+    --network-type ${NET_TYPE} \\
+    --n-graphs ${N_GRAPHS} \\
+    --output-dir ${OUTPUT_BASE} \\
+    ${DEVICE_ARG}
+
+EXIT_CODE=\$?
+
+echo ""
+echo "======================================================"
+echo " Tuning complete: ${METHOD} on ${NET_TYPE}"
+echo " Exit code: \$EXIT_CODE"
+echo " End time: \$(date)"
+echo "======================================================"
+
+exit \$EXIT_CODE
+BSUBEOF
+
+    chmod +x "$JOB_SH"
+
+    JOB_ID=$(bsub < "$JOB_SH" 2>&1 | grep -oP 'Job <\K[0-9]+')
+    if [ -n "$JOB_ID" ]; then
+        echo "  Submitted $JOB_ID: $JOB_NAME"
+        JOB_IDS+=("$JOB_ID")
+        JOB_COUNT=$((JOB_COUNT + 1))
+    else
+        echo "  ERROR: failed to submit $JOB_NAME"
+    fi
 done
 
 echo ""
 echo "======================================================"
-echo " Jobs submitted: $JOB_COUNT / 79"
+echo " Jobs submitted: $JOB_COUNT / 41"
 echo "======================================================"
 
 # ---------------------------------------------------------------------------
 # Aggregation job (depends on all tuning jobs)
 # ---------------------------------------------------------------------------
-AGG_NAME="tune_aggregate_remaining"
+AGG_NAME="tune_aggregate_final"
 AGG_SH="${LOG_DIR}/${AGG_NAME}.sh"
 
 DEPENDENCY_STRING=""
@@ -264,7 +392,7 @@ source ${PROJECT_DIR}/${PYTHON_ENV}
 cd ${PROJECT_DIR}
 
 echo "======================================================"
-echo " Aggregating tuning results (including previous runs)"
+echo " Aggregating ALL tuning results (FINAL)"
 echo "======================================================"
 echo " Start time: \$(date)"
 echo " Output dir: ${OUTPUT_BASE}"
@@ -354,10 +482,18 @@ with open(summary_file, 'w') as f:
     json.dump(summary, f, indent=2)
 
 print('')
-print('Aggregation complete!')
+print('='*60)
+print('FINAL AGGREGATION COMPLETE!')
+print('='*60)
 print(f'Network types: {summary["network_types"]}')
 print(f'Total method-network combinations: {summary["total_methods"]}')
+print(f'Expected: 192 (12 methods × 16 networks)')
 print(f'Networks: {summary["networks"]}')
+print('')
+print('Methods per network:')
+for net, count in sorted(summary["methods_per_network"].items()):
+    status = "✓ COMPLETE" if count == 12 else f"⚠ INCOMPLETE ({count}/12)"
+    print(f'  {net}: {count} methods {status}')
 PYEOF
 
 EXIT_CODE=\$?
@@ -390,6 +526,10 @@ echo "======================================================"
 echo " SUBMISSION COMPLETE"
 echo " Monitor: bjobs -u \$USER"
 echo " Results: ${OUTPUT_BASE}/"
+echo ""
+echo " This is the FINAL batch of 41 jobs."
+echo " After completion, you should have:"
+echo "   - 12 methods × 16 networks = 192 total combinations"
 echo "======================================================"
 
 # Made with Bob
