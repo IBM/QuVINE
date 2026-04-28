@@ -43,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --data-dir)    DATA_ROOT="$2";   shift 2 ;;
         --output-dir)  OUTPUT_BASE="$2"; shift 2 ;;
         --target-size) TARGET_SIZE="$2"; shift 2 ;;
+        --all)         PROCESS_ALL=true; shift ;;
         --dry-run)     DRY_RUN=true;     shift ;;
         *)
             echo "Unknown option: $1"
@@ -63,13 +64,34 @@ mkdir -p "$LOG_DIR" "${OUTPUT_BASE}/results"
 
 echo "Discovering DGL graph files in ${DATA_ROOT}..."
 
-if [ -n "$TARGET_SIZE" ]; then
-    CSV_FILES=($(find "$DATA_ROOT/n${TARGET_SIZE}" -name "*.csv" -type f ! -name "*_node_index.csv" 2>/dev/null | sort))
-    SIZE_TAG="n${TARGET_SIZE}"
+# Build search path
+if [ "$PROCESS_ALL" = true ]; then
+    # Process all datasets
+    SEARCH_PATH="${DATA_ROOT}"
+    if [ -n "$TARGET_SIZE" ]; then
+        SEARCH_PATH="${SEARCH_PATH}/*/processed/n${TARGET_SIZE}"
+    else
+        SEARCH_PATH="${SEARCH_PATH}/*/processed"
+    fi
+elif [ -n "$DATASET" ]; then
+    SEARCH_PATH="${DATA_ROOT}/${DATASET}/processed"
+    if [ -n "$TARGET_SIZE" ]; then
+        SEARCH_PATH="${SEARCH_PATH}/n${TARGET_SIZE}"
+    fi
 else
-    CSV_FILES=($(find "$DATA_ROOT" -name "*.csv" -type f ! -name "*_node_index.csv" | sort))
+    SEARCH_PATH="${DATA_ROOT}"
+fi
+
+CSV_FILES=($(find "$SEARCH_PATH" -name "*.csv" -type f ! -name "*_node_index.csv" 2>/dev/null | sort))
+
+if [ "$PROCESS_ALL" = true ]; then
+    SIZE_TAG="all_datasets"
+elif [ -n "$DATASET" ]; then
+    SIZE_TAG="${DATASET}"
+else
     SIZE_TAG="all"
 fi
+[ -n "$TARGET_SIZE" ] && SIZE_TAG="${SIZE_TAG}_n${TARGET_SIZE}"
 
 TOTAL_JOBS=${#CSV_FILES[@]}
 
@@ -85,6 +107,8 @@ echo "======================================================"
 echo " Project dir  : $PROJECT_DIR"
 echo " Data dir     : $DATA_ROOT"
 echo " Output dir   : $OUTPUT_BASE"
+echo " Process all  : $PROCESS_ALL"
+echo " Dataset      : ${DATASET:-all datasets}"
 echo " Target size  : ${TARGET_SIZE:-all sizes}"
 echo " Queue        : $QUEUE"
 echo " Wall time    : $WALLTIME"

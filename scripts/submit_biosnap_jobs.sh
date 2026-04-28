@@ -27,6 +27,7 @@ DRY_RUN=false
 PYTHON_ENV="/u/futro/envs/py311/bin/activate"
 METHODS="quvine_fused,quvine_ctqw,quvine_dtqw,quvine_rwr,quvine_heat,quvine_poly,quvine_hgcnmf,quvine_pgcnmf,netmf,node2vec,baseline_gcnmf,baseline_filter,graphsage"
 DATASET=""
+PROCESS_ALL=false
 TARGET_SIZE=""
 
 DATA_ROOT="/dccstor/cgq4hls/Q/biosnap"
@@ -45,10 +46,11 @@ while [[ $# -gt 0 ]]; do
         --output-dir)  OUTPUT_BASE="$2"; shift 2 ;;
         --dataset)     DATASET="$2";     shift 2 ;;
         --target-size) TARGET_SIZE="$2"; shift 2 ;;
+        --all)         PROCESS_ALL=true; shift ;;
         --dry-run)     DRY_RUN=true;     shift ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--seed-pct P] [--target-pct P] [--dataset NAME] [--target-size SIZE] [--dry-run]"
+            echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--seed-pct P] [--target-pct P] [--dataset NAME] [--target-size SIZE] [--all] [--dry-run]"
             exit 1 ;;
     esac
 done
@@ -66,7 +68,15 @@ mkdir -p "$LOG_DIR" "${OUTPUT_BASE}/results"
 echo "Discovering BioSNAP graph files in ${DATA_ROOT}..."
 
 # Build search path
-if [ -n "$DATASET" ]; then
+if [ "$PROCESS_ALL" = true ]; then
+    # Process all datasets
+    SEARCH_PATH="${DATA_ROOT}"
+    if [ -n "$TARGET_SIZE" ]; then
+        SEARCH_PATH="${SEARCH_PATH}/*/processed/n${TARGET_SIZE}"
+    else
+        SEARCH_PATH="${SEARCH_PATH}/*/processed"
+    fi
+elif [ -n "$DATASET" ]; then
     SEARCH_PATH="${DATA_ROOT}/${DATASET}/processed"
     if [ -n "$TARGET_SIZE" ]; then
         SEARCH_PATH="${SEARCH_PATH}/n${TARGET_SIZE}"
@@ -84,7 +94,13 @@ if [ $TOTAL_JOBS -eq 0 ]; then
     exit 1
 fi
 
-SIZE_TAG="${DATASET:-all}"
+if [ "$PROCESS_ALL" = true ]; then
+    SIZE_TAG="all_datasets"
+elif [ -n "$DATASET" ]; then
+    SIZE_TAG="${DATASET}"
+else
+    SIZE_TAG="all"
+fi
 [ -n "$TARGET_SIZE" ] && SIZE_TAG="${SIZE_TAG}_n${TARGET_SIZE}"
 
 echo "======================================================"
@@ -93,6 +109,7 @@ echo "======================================================"
 echo " Project dir  : $PROJECT_DIR"
 echo " Data dir     : $DATA_ROOT"
 echo " Output dir   : $OUTPUT_BASE"
+echo " Process all  : $PROCESS_ALL"
 echo " Dataset      : ${DATASET:-all datasets}"
 echo " Target size  : ${TARGET_SIZE:-all sizes}"
 echo " Queue        : $QUEUE"
