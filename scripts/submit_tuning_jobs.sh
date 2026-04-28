@@ -31,6 +31,7 @@
 #
 # Options:
 #   --networks NET1,NET2,...  Network types to tune (default: erdos_renyi,modular)
+#   --methods MET1,MET2,...   Methods to tune (default: all 12)
 #   --serial                  Run all methods in one job per network (default: parallel)
 #   --queue QUEUE             LSF queue name (default: normal)
 #   --walltime TIME           Wall time limit (default: 48:00)
@@ -108,12 +109,15 @@ while [[ $# -gt 0 ]]; do
         --networks)
             IFS=',' read -ra NETWORK_TYPES <<< "$2"
             shift 2 ;;
+        --methods)
+            IFS=',' read -ra METHODS <<< "$2"
+            shift 2 ;;
         --dry-run)    DRY_RUN=true;    shift ;;
         --serial)     SERIAL_MODE=true; shift ;;
         *)
             echo "Unknown option: $1"
             echo "Usage: $0 [--queue Q] [--walltime T] [--memory M] [--n-graphs N]"
-            echo "          [--networks NET1,NET2,...] [--serial] [--dry-run]"
+            echo "          [--networks NET1,NET2,...] [--methods MET1,MET2,...] [--serial] [--dry-run]"
             exit 1 ;;
     esac
 done
