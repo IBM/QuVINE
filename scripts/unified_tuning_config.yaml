@@ -92,13 +92,6 @@ diseases:
     targets: "/dccstor/boseukb/Q/NetMed/Aug21/GWAS_NetworkPropagation/processed_data/gwas_catalog_targets/schizophrenia_targets_ncbi_gwas_catalog.json"
 
 # ============================================================================
-# EXPERIMENT SETTINGS
-# ============================================================================
-experiment:
-  output_dir: "ppi_tuning_by_task"
-  log_level: "INFO"
-
-# ============================================================================
 # HYPERPARAMETER SEARCH SPACES (12 Methods)
 # ============================================================================
 hyperparameters:
@@ -276,6 +269,12 @@ optuna:
 # EXPERIMENT SETTINGS
 # ============================================================================
 experiment:
+  # Tasks to tune
+  tasks:
+    - "node_classification"
+    - "link_prediction"
+    - "node_ranking"
+  
   # For synthetic networks
   n_graphs: 10
   network_types: [

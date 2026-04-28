@@ -94,6 +94,10 @@ diseases:
 # EXPERIMENT SETTINGS
 # ============================================================================
 experiment:
+  tasks:
+    - "node_classification"
+    - "link_prediction"
+    - "node_ranking"
   output_dir: "ppi_tuning_by_task"
   log_level: "INFO"
 

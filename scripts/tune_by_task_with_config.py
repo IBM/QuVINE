@@ -625,8 +625,9 @@ def generate_embedding(method: str, G: nx.Graph, seeds: List[int], params: Dict[
         elif method == "netmf":
             netmf_params = {
                 'dimensions': params.get('embedding_dim', 128),
-                'window': params.get('window_size', 10),  # API uses 'window' not 'window_size'
-                'negative': params.get('negative_samples', 5),
+                'window_size': params.get('window_size', 10),
+                'negative': params.get('negative', 5),
+                'rank': params.get('rank', 256),
             }
             return run_netmf(G, nodes=list(G.nodes()), **netmf_params)
         elif method == "graphsage":
